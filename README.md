@@ -27,8 +27,42 @@
 ## 工具端桥接
 
 如果 MCP Server 使用 **stdio / SSE / Streamable HTTP** 而不是原生 WebSocket，
-可以直接使用内置的 [mcp-bridge](./mcp-bridge/README.md)，它会把三种传输统一转换为
-本项目的工具端 WebSocket 协议。
+可以使用内置的 [mcp-bridge](./mcp-bridge/) 把它转换为本项目的工具端 WebSocket 协议。
+
+- 目录：[mcp-bridge/](./mcp-bridge/)
+- 详细说明：[mcp-bridge/README.md](./mcp-bridge/README.md)
+- 支持传输：`stdio`、`sse`、`streamable-http`
+- 特性：原始 JSON-RPC 透传、断线重连、Docker 部署、日志隐藏 token
+
+### 快速使用
+
+1. 从 endpoint server 日志获取工具端地址，填入 `MCP_ENDPOINT`：
+   `ws://<ip>:8004/mcp_endpoint/mcp/?token=...`。token 已经过 URL 编码，**不要再次编码**。
+2. 按 MCP Server 的传输方式启动 bridge：
+
+```bash
+# stdio
+MCP_ENDPOINT='ws://127.0.0.1:8004/mcp_endpoint/mcp/?token=...' \
+MCP_TRANSPORT=stdio \
+MCP_COMMAND=python \
+MCP_ARGS='["/app/server.py"]' \
+python mcp_bridge.py
+
+# SSE
+MCP_ENDPOINT='ws://127.0.0.1:8004/mcp_endpoint/mcp/?token=...' \
+MCP_TRANSPORT=sse \
+MCP_URL='http://127.0.0.1:8080/sse' \
+python mcp_bridge.py
+
+# Streamable HTTP
+MCP_ENDPOINT='ws://127.0.0.1:8004/mcp_endpoint/mcp/?token=...' \
+MCP_TRANSPORT=streamable-http \
+MCP_URL='http://127.0.0.1:8080/mcp' \
+python mcp_bridge.py
+```
+
+Docker 方式见 [mcp-bridge/docker-compose.example.yml](./mcp-bridge/docker-compose.example.yml)，
+完整环境变量与排障说明见 [mcp-bridge/README.md](./mcp-bridge/README.md)。
 
 ## 技术细节
 [技术细节](./README_dev.md)
