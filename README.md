@@ -24,6 +24,12 @@
 
 [MCP 接入点部署使用指南](https://github.com/xinnan-tech/xiaozhi-esp32-server/blob/main/docs/mcp-endpoint-integration.md)
 
+## 工具端桥接
+
+如果 MCP Server 使用 **stdio / SSE / Streamable HTTP** 而不是原生 WebSocket，
+可以直接使用内置的 [mcp-bridge](./mcp-bridge/README.md)，它会把三种传输统一转换为
+本项目的工具端 WebSocket 协议。
+
 ## 技术细节
 [技术细节](./README_dev.md)
 
