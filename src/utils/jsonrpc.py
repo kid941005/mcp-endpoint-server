@@ -91,15 +91,28 @@ class JSONRPCProtocol:
 
     @staticmethod
     def to_dict(obj: Union[JSONRPCRequest, JSONRPCResponse]) -> Dict:
-        """将对象转换为字典"""
-        return asdict(obj)
+        """将对象转换为字典（响应严格 result/error 二选一）。"""
+        data = asdict(obj)
+        if isinstance(obj, JSONRPCResponse):
+            if obj.error is not None:
+                data.pop("result", None)
+                if data.get("error", {}).get("data") is None:
+                    data["error"].pop("data", None)
+            else:
+                data.pop("error", None)
+        elif isinstance(obj, JSONRPCRequest):
+            if data.get("params") is None:
+                data.pop("params", None)
+            if data.get("id") is None:
+                data.pop("id", None)
+        return data
 
     @staticmethod
     def to_json(
         obj: Union[JSONRPCRequest, JSONRPCResponse], ensure_ascii: bool = False
     ) -> str:
         """将对象转换为JSON字符串"""
-        return json.dumps(asdict(obj), ensure_ascii=ensure_ascii)
+        return json.dumps(JSONRPCProtocol.to_dict(obj), ensure_ascii=ensure_ascii)
 
     @staticmethod
     def parse_request(json_str: str) -> Optional[JSONRPCRequest]:

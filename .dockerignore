@@ -45,8 +45,18 @@ ENV/
 ehthumbs.db
 Thumbs.db
 
-# 日志文件
-logs/*.log
+# 运行数据与密钥
+logs/
+data/
+.env
+.env.*
+*.cfg.local
+
+# 测试与本地工具
+.venv/
+tests/
+.github/
+mcp-bridge/
 
 # 临时文件
 *.tmp

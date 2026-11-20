@@ -96,22 +96,5 @@ def decrypt(key: str, encrypted_text: str) -> str:
     except Exception as e:
         return None
 
-
-if __name__ == "__main__":
-    # 测试代码
-    test_key = "6a369b7f1bcf4d3e8d123ece38bb9627"
-    test_text = '{"agentId": "test1"}'
-
-    print(f"原始文本: {test_text}")
-    print(f"密钥: {test_key}")
-
-    # 加密
-    encrypted = encrypt(test_key, test_text)
-    print(f"加密结果: {encrypted}")
-
-    # 解密
-    decrypted = decrypt(test_key, encrypted)
-    print(f"解密结果: {decrypted}")
-
-    # 验证
-    print(f"加解密一致性: {test_text == decrypted}")
+# 注意：AES.MODE_ECB 是为兼容既有小智端 token 协议而保留，ECB 无 IV，
+# 不应单独用于新协议；如需增强需客户端与服务端同步升级协议。

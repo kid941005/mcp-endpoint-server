@@ -7,9 +7,7 @@ import asyncio
 import json
 import time
 import uuid
-from typing import Dict, Any, List, Optional, Tuple, Set
-from websockets.server import WebSocketServerProtocol
-from websockets.exceptions import ConnectionClosed
+from typing import Dict, Any, List, Optional, Tuple
 from ..utils.logger import get_logger
 
 logger = get_logger()
@@ -18,7 +16,7 @@ logger = get_logger()
 class RobotConnection:
     """小智端连接信息"""
 
-    def __init__(self, websocket: WebSocketServerProtocol, agent_id: str):
+    def __init__(self, websocket: Any, agent_id: str):
         self.websocket = websocket
         self.agent_id = agent_id
         self.connection_uuid = str(uuid.uuid4())
@@ -28,7 +26,7 @@ class RobotConnection:
 class MCPServerConnection:
     """MCP服务器连接信息"""
 
-    def __init__(self, websocket: WebSocketServerProtocol, agent_id: str):
+    def __init__(self, websocket: Any, agent_id: str):
         self.websocket = websocket
         self.agent_id = agent_id
         self.connection_uuid = str(uuid.uuid4())
@@ -40,12 +38,14 @@ class MCPServerConnection:
 class PendingResponse:
     """待处理的响应信息"""
 
-    def __init__(self, request_id: Any, connection_uuid: str, expected_connections: List[str]):
+    def __init__(self, transformed_request_id: str, request_id: Any, connection_uuid: str, expected_connections: List[str]):
+        self.transformed_request_id = transformed_request_id
         self.request_id = request_id
         self.connection_uuid = connection_uuid
         self.expected_connections = set(expected_connections)
         self.received_responses = {}
         self.timestamp = time.time()
+        self.timeout_task: Optional[asyncio.Task] = None
 
 
 class ConnectionManager:
@@ -62,9 +62,11 @@ class ConnectionManager:
         self.pending_responses: Dict[str, PendingResponse] = {}
         # 连接锁
         self._lock = asyncio.Lock()
+        # 待处理响应超时（秒），避免任一 MCP 不响应时永久挂起并泄漏
+        self.pending_timeout = 30.0
 
     async def register_mcp_server_connection(
-        self, agent_id: str, websocket: WebSocketServerProtocol
+        self, agent_id: str, websocket: Any
     ) -> str:
         """注册MCP服务器连接，返回分配的UUID"""
         async with self._lock:
@@ -80,7 +82,7 @@ class ConnectionManager:
             return mcp_conn.connection_uuid
 
     async def register_robot_connection(
-        self, agent_id: str, websocket: WebSocketServerProtocol
+        self, agent_id: str, websocket: Any
     ) -> str:
         """注册小智端连接，返回分配的UUID"""
         async with self._lock:
@@ -123,9 +125,9 @@ class ConnectionManager:
             # 其他类型转换为字符串
             return f"{connection_uuid}_s_{str(original_id)}"
 
-    def _restore_jsonrpc_id(self, transformed_id: str) -> Tuple[Optional[str], Any]:
+    def _restore_jsonrpc_id(self, transformed_id: Any) -> Tuple[Optional[str], Any]:
         """还原JSON-RPC ID，返回(connection_uuid, original_id)"""
-        if not transformed_id or "_" not in transformed_id:
+        if not isinstance(transformed_id, str) or "_" not in transformed_id:
             return None, None
 
         # 解析格式: uuid_type_original_id
@@ -165,10 +167,10 @@ class ConnectionManager:
         # 创建消息副本
         transformed_message = message.copy()
 
-        # 转换ID
+        # 转换ID（id=0 是合法的 JSON-RPC 请求 ID，不能用真值判断）
         if "id" in transformed_message:
             original_id = transformed_message["id"]
-            if original_id:
+            if original_id is not None:
                 transformed_message["id"] = self._transform_jsonrpc_id(
                     original_id, connection_uuid
                 )
@@ -219,13 +221,12 @@ class ConnectionManager:
             await asyncio.wait_for(mcp_conn.websocket.send_text(message_str), timeout=5.0)
             logger.debug(f"消息已转发给MCP服务器 {agent_id} (UUID: {mcp_connection_uuid}): {message_str}")
             return True
-        except (ConnectionClosed, asyncio.TimeoutError):
-            logger.warning(f"MCP服务器连接已关闭: {agent_id} (UUID: {mcp_connection_uuid})")
+        except Exception as e:
+            # Starlette 的 WebSocket 在断开时通常抛 RuntimeError/WebSocketDisconnect/OSError，
+            # 而不仅仅是 websockets.ConnectionClosed；任何发送失败都视为连接失效并清理。
+            logger.warning(f"MCP服务器连接已断开，转发失败: {agent_id} (UUID: {mcp_connection_uuid}) - {e}")
             # 此处已释放 _lock，unregister 可以安全地重新获取锁。
             await self.unregister_mcp_server_connection(agent_id, mcp_connection_uuid)
-            return False
-        except Exception as e:
-            logger.error(f"转发消息给MCP服务器失败: {e}")
             return False
 
     async def forward_to_robot_by_uuid(
@@ -252,21 +253,43 @@ class ConnectionManager:
                 f"消息已转发给小智端 {robot_conn.agent_id} (UUID: {connection_uuid}): {message_str}"
             )
             return True
-        except (ConnectionClosed, asyncio.TimeoutError):
-            logger.warning(f"小智端连接已关闭: {connection_uuid}")
+        except Exception as e:
+            logger.warning(f"小智端连接已断开，转发失败: {connection_uuid} - {e}")
             # 此处已释放 _lock，unregister 可以安全地重新获取锁。
             await self.unregister_robot_connection(connection_uuid)
-            return False
-        except Exception as e:
-            logger.error(f"转发消息给小智端失败: {e}")
             return False
 
     def register_pending_response(self, transformed_request_id: str, request_id: Any, connection_uuid: str, expected_connections: List[str]):
         """注册待处理的响应"""
-        self.pending_responses[transformed_request_id] = PendingResponse(
-            request_id, connection_uuid, expected_connections
+        pending = PendingResponse(
+            transformed_request_id, request_id, connection_uuid, expected_connections
+        )
+        self.pending_responses[transformed_request_id] = pending
+        pending.timeout_task = asyncio.create_task(
+            self._expire_pending_response(transformed_request_id)
         )
         logger.debug(f"注册待处理响应: {transformed_request_id}, 期望连接: {expected_connections}")
+
+    async def _expire_pending_response(self, transformed_request_id: str):
+        """超时清理未完成的请求，避免永久挂起与内存泄漏。"""
+        try:
+            await asyncio.sleep(self.pending_timeout)
+        except asyncio.CancelledError:
+            return
+        pending = self.pending_responses.pop(transformed_request_id, None)
+        if pending is None:
+            return
+        logger.warning(f"等待 MCP 响应超时: {transformed_request_id}")
+        error_message = {
+            "jsonrpc": "2.0",
+            "id": pending.request_id,
+            "error": {
+                "code": -32002,
+                "message": "等待工具端响应超时",
+                "data": {"timeout_seconds": self.pending_timeout},
+            },
+        }
+        await self.forward_to_robot_by_uuid(pending.connection_uuid, error_message)
 
     def add_server_response(self, transformed_request_id: str, mcp_connection_uuid: str, response: Dict[str, Any]):
         """添加服务器响应"""
@@ -280,79 +303,91 @@ class ConnectionManager:
                 return pending
         return None
 
+    def discard_expected_connection(self, transformed_request_id: str, mcp_connection_uuid: str):
+        """转发失败时缩减期望集合；若剩余连接已全部响应则返回 pending。"""
+        pending = self.pending_responses.get(transformed_request_id)
+        if pending is None:
+            return None
+        pending.expected_connections.discard(mcp_connection_uuid)
+        if not pending.expected_connections:
+            return pending
+        if pending.expected_connections.issubset(set(pending.received_responses.keys())):
+            return pending
+        return None
+
     def remove_pending_response(self, transformed_request_id: str):
         """移除待处理的响应"""
-        if transformed_request_id in self.pending_responses:
-            del self.pending_responses[transformed_request_id]
+        pending = self.pending_responses.pop(transformed_request_id, None)
+        if pending is not None:
+            if pending.timeout_task and not pending.timeout_task.done():
+                pending.timeout_task.cancel()
             logger.debug(f"移除待处理响应: {transformed_request_id}")
 
     def aggregate_responses(self, pending: PendingResponse) -> Dict[str, Any]:
-        """聚合多个服务器的响应"""
+        """聚合多个服务器的响应。
+
+        JSON-RPC 响应必须 result/error 二选一；任一子响应错误时直接返回该错误，
+        不能把 error 对象混入 tools/content 数组产出非法 MCP 结果。
+        """
         try:
-            # 收集所有响应
-            all_responses = []
-            id = ""
-            flag = ""
-            
-            for _, response in pending.received_responses.items():
-                id = response.get("id", "")
-                
-                if "result" in response:
-                    result = response["result"].copy()
-                    
-                    # 检查是否为工具列表响应
-                    if "tools" in result:
-                        flag = "tools"
-                        all_responses.extend(result["tools"])
-                    elif "content" in result:
-                        flag = "content"
-                        content = result["content"]
-                        all_responses.extend(content)
-                    else:
-                        all_responses.append(result)
-                        
-                elif "error" in response:
-                    # 处理错误响应
-                    all_responses.append({"error": response["error"].copy()})
+            responses = list(pending.received_responses.values())
+            response_id = pending.transformed_request_id
+            if responses:
+                response_id = responses[0].get("id", pending.transformed_request_id)
 
-            # 创建聚合响应
-            if flag == "tools" or flag == "content":
-                # 工具列表响应
-                aggregated_response = {
+            errors = [response["error"] for response in responses if "error" in response]
+            if errors:
+                return {
                     "jsonrpc": "2.0",
-                    "id": id,
-                    "result": {
-                        flag: all_responses,
-                        "total_servers": len(pending.expected_connections),
-                        "responded_servers": len(pending.received_responses)
-                    }
+                    "id": response_id,
+                    "error": errors[0],
                 }
+
+            successful = [response["result"] for response in responses if "result" in response]
+            if not successful:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": response_id,
+                    "error": {
+                        "code": -32603,
+                        "message": "工具端未返回有效结果",
+                    },
+                }
+
+            tools: List[Any] = []
+            content: List[Any] = []
+            is_tools = False
+            is_content = False
+            for result in successful:
+                if isinstance(result, dict) and "tools" in result:
+                    is_tools = True
+                    tools.extend(result.get("tools") or [])
+                elif isinstance(result, dict) and "content" in result:
+                    is_content = True
+                    content.extend(result.get("content") or [])
+
+            if is_tools:
+                aggregated = {"tools": tools}
+            elif is_content:
+                aggregated = {"content": content}
+            elif len(successful) == 1:
+                aggregated = successful[0]
             else:
-                # 其他类型的响应
-                aggregated_response = {
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "result": {
-                        "responses": all_responses,
-                        "total_servers": len(pending.expected_connections),
-                        "responded_servers": len(pending.received_responses)
-                    }
-                }
+                aggregated = {"responses": successful}
 
-            logger.debug(f"聚合响应完成: {len(all_responses)} 个响应")
-            return aggregated_response
+            logger.debug(f"聚合响应完成: {len(successful)} 个成功响应")
+            return {"jsonrpc": "2.0", "id": response_id, "result": aggregated}
 
         except Exception as e:
             logger.error(f"聚合响应时发生错误: {e}")
-            # 返回错误响应
             return {
                 "jsonrpc": "2.0",
                 "id": pending.request_id,
                 "error": {
                     "code": -32603,
                     "message": "聚合响应时发生错误",
-                    "data": {"details": str(e)}
-                }
+                    "data": {"details": str(e)},
+                },
             }
 
     def update_tool_list(self, agent_id: str, mcp_connection_uuid: str, tools: List[Dict[str, Any]]):

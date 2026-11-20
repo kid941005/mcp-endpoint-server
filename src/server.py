@@ -3,18 +3,16 @@ MCP Endpoint Server
 主服务器文件
 """
 
-import sys
+import hmac
 import json
-import signal
 import uvicorn
-from urllib.parse import quote
 from .utils.config import config
 from .utils.logger import get_logger
-from .utils.aes_utils import decrypt, encrypt
+from .utils.aes_utils import decrypt
 from .utils.jsonrpc import (
     JSONRPCProtocol,
 )
-from src.utils.util import get_local_ip
+from .utils.util import get_local_ip
 from .utils import __version__
 from contextlib import asynccontextmanager
 from fastapi.responses import RedirectResponse
@@ -44,7 +42,7 @@ async def validate_token_and_get_agent_id(websocket: WebSocket) -> str:
 
     data = decrypt(config.get("server", "key", ""), token)
     if not data:
-        logger.error(f"token解密失败: {token}")
+        logger.error("token解密失败（token 已隐藏）")
         await websocket.close(code=1008, reason="token解密失败")
         return None
 
@@ -67,24 +65,11 @@ async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     # 启动时
     logger.info("MCP Endpoint Server 正在启动...")
-    logger.info(f"=====下面的地址分别是智控台/多模块MCP接入点地址====")
     local_ip = get_local_ip()
-    logger.info(
-        f"智控台MCP参数配置: http://{local_ip}:{config.getint('server', 'port', 8004)}/mcp_endpoint/health?key={config.get('server', 'key', '')}"
-    )
-    encrypted_token = encrypt(
-        config.get("server", "key", ""), '{"agentId":"single_module"}'
-    )
-    token = quote(encrypted_token)
-    logger.info(
-        f"单模块部署MCP接入点: ws://{local_ip}:{config.getint('server', 'port', 8004)}/mcp_endpoint/mcp/?token={token}"
-    )
-    logger.info(
-        f"多模块部署MCP接入点: ws://{local_ip}:{config.getint('server', 'port', 8004)}/mcp_endpoint/mcp/?token={token}"
-    )
-    logger.info(
-        "=====请根据具体部署选择使用，请勿泄露给任何人======",
-    )
+    port = config.getint("server", "port", 8004)
+    logger.info(f"健康检查地址: http://{local_ip}:{port}/mcp_endpoint/health")
+    logger.info(f"工具端 MCP 接入点: ws://{local_ip}:{port}/mcp_endpoint/mcp/")
+    logger.info("server.key 与加密 token 已隐藏，请从配置文件读取，请勿泄露。")
     yield
     # 关闭时
     logger.info("MCP Endpoint Server 已关闭")
@@ -100,10 +85,17 @@ app = FastAPI(
 
 # 配置CORS
 if config.getboolean("security", "enable_cors", True):
+    raw_origins = config.get("security", "allowed_origins", "*") or "*"
+    allowed_origins = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
+    allow_credentials = config.getboolean("security", "allow_credentials", False)
+    if "*" in allowed_origins and allow_credentials:
+        # 浏览器规范禁止 Access-Control-Allow-Origin: * 与凭据同时使用。
+        logger.warning("allowed_origins 为 * 时已禁用 allow_credentials")
+        allow_credentials = False
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[config.get("security", "allowed_origins", "*")],
-        allow_credentials=True,
+        allow_origins=allowed_origins,
+        allow_credentials=allow_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -131,9 +123,9 @@ async def root():
 @app.get("/mcp_endpoint/health")
 async def health_check(key: str = None, agentid: str = None):
     """健康检查"""
-    # 验证key参数
+    # 验证key参数（常量时间比较，避免时序侧信道）
     expected_key = config.get("server", "key", "")
-    if not key or key != expected_key:
+    if not key or not expected_key or not hmac.compare_digest(str(key), str(expected_key)):
         response = JSONRPCProtocol.create_error_response(
             error_code=JSONRPCProtocol.AUTHENTICATION_ERROR,
             error_message="密钥验证失败",
@@ -151,6 +143,23 @@ async def health_check(key: str = None, agentid: str = None):
         result={"status": "success", "message": "ok"}
     )
     return JSONRPCProtocol.to_dict(response)
+
+
+@app.get("/mcp_endpoint/stats")
+async def stats(key: str = None):
+    """连接与工具统计（需 server.key 授权）。"""
+    expected_key = config.get("server", "key", "")
+    if not key or not expected_key or not hmac.compare_digest(str(key), str(expected_key)):
+        response = JSONRPCProtocol.create_error_response(
+            error_code=JSONRPCProtocol.AUTHENTICATION_ERROR,
+            error_message="密钥验证失败",
+            error_data={"details": "提供的密钥无效或缺失"},
+        )
+        return JSONRPCProtocol.to_dict(response)
+
+    return JSONRPCProtocol.to_dict(
+        JSONRPCProtocol.create_success_response(result=connection_manager.get_connection_stats())
+    )
 
 
 @app.websocket("/mcp_endpoint/mcp/")
@@ -198,6 +207,7 @@ async def websocket_robot_endpoint(websocket: WebSocket):
     if not agent_id:
         return
 
+    connection_uuid = None
     try:
         # 注册连接并获取UUID
         connection_uuid = await connection_manager.register_robot_connection(
@@ -221,14 +231,9 @@ async def websocket_robot_endpoint(websocket: WebSocket):
     except Exception as e:
         logger.error(f"处理小智端连接时发生错误: {e}")
     finally:
-        await connection_manager.unregister_robot_connection(connection_uuid)
-        logger.info(f"小智端连接已关闭: {agent_id} (UUID: {connection_uuid})")
-
-
-def signal_handler(signum, frame):
-    """信号处理器"""
-    logger.info(f"收到信号 {signum}，正在关闭服务器...")
-    sys.exit(0)
+        if connection_uuid:
+            await connection_manager.unregister_robot_connection(connection_uuid)
+            logger.info(f"小智端连接已关闭: {agent_id} (UUID: {connection_uuid})")
 
 
 def main():
@@ -237,10 +242,6 @@ def main():
     from .utils.logger import logger_manager
 
     logger_manager.setup_uvicorn_logging()
-
-    # 注册信号处理器
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
 
     # 获取配置
     host = config.get("server", "host", "127.0.0.1")

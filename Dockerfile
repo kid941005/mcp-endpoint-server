@@ -1,29 +1,23 @@
-# 第一阶段：构建Python依赖
-FROM python:3.10-slim AS builder
+FROM python:3.12-slim AS builder
 
-# 设置工作目录
 WORKDIR /app
-
-# 复制依赖文件
 COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
-# 安装Python依赖
-RUN pip install --no-cache-dir -r requirements.txt
+FROM python:3.12-slim
 
-# 第二阶段：运行阶段
-FROM python:3.10-slim
-
-# 设置工作目录
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 WORKDIR /app
 
-# 从构建阶段复制Python依赖
-COPY --from=builder /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
+COPY --from=builder /install /usr/local
+COPY main.py ./
+COPY src ./src
+COPY mcp-endpoint-server.cfg ./
 
-# 创建必要的目录
-RUN mkdir -p logs data
+RUN mkdir -p logs data \
+    && adduser --disabled-password --gecos "" appuser \
+    && chown -R appuser:appuser /app
+USER appuser
 
-# 复制应用代码
-COPY . .
-
-# 启动命令
+EXPOSE 8004
 CMD ["python", "main.py"]

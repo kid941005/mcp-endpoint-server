@@ -9,7 +9,7 @@
 - 🚀 **高性能**: 基于FastAPI和WebSocket的异步架构，支持高并发
 - 🔄 **消息转发**: 自动转发工具端和小智端之间的消息
 - 🔒 **连接管理**: 智能管理WebSocket连接，支持连接清理
-- 📊 **监控统计**: 提供连接统计和健康检查接口
+- 📊 **监控统计**: 提供受密钥保护的连接统计和健康检查接口
 - ⚙️ **配置灵活**: 支持配置文件管理，易于部署和维护
 - 🛡️ **错误处理**: 完善的错误处理和日志记录
 - 🌐 **多服务器支持**: 支持一个智能体连接多个MCP服务器，统一管理工具列表和调用
@@ -63,6 +63,26 @@ python mcp_bridge.py
 
 Docker 方式见 [mcp-bridge/docker-compose.example.yml](./mcp-bridge/docker-compose.example.yml)，
 完整环境变量与排障说明见 [mcp-bridge/README.md](./mcp-bridge/README.md)。
+
+## 接口与安全
+
+- `GET /mcp_endpoint/`：服务信息（版本、运行状态）。
+- `GET /mcp_endpoint/health?key=<server_key>`：健康检查。
+- `GET /mcp_endpoint/stats?key=<server_key>`：连接数与待处理请求统计。
+- 请求方与工具端连接均校验 token；服务端日志不会输出明文 token 或 server key。
+- `allowed_origins` 支持逗号分隔多个来源；设置为 `*` 时自动关闭 CORS credentials。
+- token 已经过 URL 编码，接入时不要再次编码；AES-ECB 为兼容既有 token 协议保留。
+
+## 测试
+
+本地运行后端单元测试：
+
+```bash
+python -m pip install -r requirements-dev.txt
+python -m unittest discover -s tests -p 'test_*.py' -v
+```
+
+mcp-bridge 的测试单独运行，详见 [mcp-bridge/README.md](./mcp-bridge/README.md)。
 
 ## 技术细节
 [技术细节](./README_dev.md)

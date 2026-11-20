@@ -5,7 +5,6 @@
 import os
 import sys
 import logging
-from typing import Optional
 from loguru import logger
 from .config import config
 
@@ -23,8 +22,11 @@ class InterceptHandler(logging.Handler):
         except ValueError:
             level = record.levelno
 
-        # 查找调用者
-        frame, depth = sys._getframe(6), 6
+        # 查找调用者（不同 Python/日志调用栈深度可能不足，需容错）
+        try:
+            frame, depth = sys._getframe(6), 6
+        except ValueError:
+            frame, depth = None, 0
         while frame and frame.f_code.co_filename == __file__:
             frame = frame.f_back
             depth += 1
@@ -69,8 +71,10 @@ class LoggerManager:
         # 文件处理器（不带颜色）
         log_file = config.get("logging", "log_file", "logs/mcp_server.log")
         if log_file:
-            # 确保日志目录存在
-            os.makedirs(os.path.dirname(log_file), exist_ok=True)
+            # 确保日志目录存在；纯文件名时 dirname 为空，不能直接 makedirs。
+            log_dir = os.path.dirname(log_file)
+            if log_dir:
+                os.makedirs(log_dir, exist_ok=True)
 
             # 文件格式（不带颜色）
             file_format = f"{{time:YYYY-MM-DD HH:mm:ss}} [{VERSION}][{{name}}] {{level}} - {{message}}"

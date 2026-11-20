@@ -4,7 +4,7 @@
 
 import os
 import configparser
-import uuid
+import secrets
 from typing import Optional
 from pathlib import Path
 
@@ -48,26 +48,22 @@ class ConfigManager:
             self._create_default_config()
 
     def _check_and_generate_key(self):
-        """检查key是否存在且长度足够，如果不足则生成新的"""
+        """检查key是否存在且长度足够，如果不足则生成新的。"""
         try:
             current_key = self.config.get("server", "key", fallback="")
             if not current_key or len(current_key) < 32:
-                # 生成32位随机密码
                 new_key = self._generate_random_key()
                 self.config.set("server", "key", new_key)
-
-                # 保存到配置文件
                 with open(self.config_file, "w", encoding="utf-8") as f:
                     self.config.write(f)
-
-                print(f"已自动生成新的32位密钥: {new_key}")
+                # 绝不把密钥打印到 stdout/日志，避免泄露。
+                print("已自动生成新的 32 位密钥并写入配置文件（值不在日志中显示）。")
         except Exception as e:
-            print(f"检查密钥时发生错误: {e}")
+            raise RuntimeError(f"检查或生成 server.key 失败: {e}") from e
 
     def _generate_random_key(self) -> str:
-        """生成指定长度的随机密钥"""
-        # 使用UUID生成密钥，移除连字符
-        return str(uuid.uuid4()).replace("-", "")
+        """生成 32 字符的密码学随机密钥。"""
+        return secrets.token_hex(16)
 
     def _create_default_config(self):
         """创建默认配置"""
