@@ -31,6 +31,13 @@ class IdHandlingTests(unittest.TestCase):
         message = manager.transform_jsonrpc_message({"jsonrpc": "2.0", "method": "notify"}, "uuid")
         self.assertNotIn("id", message)
 
+    def test_string_id_with_underscores_roundtrips(self):
+        manager = ConnectionManager()
+        message = manager.transform_jsonrpc_message({"id": "abc_def"}, "uuid")
+        connection_uuid, restored = manager.restore_jsonrpc_message(message)
+        self.assertEqual(connection_uuid, "uuid")
+        self.assertEqual(restored["id"], "abc_def")
+
 
 class AggregateTests(unittest.TestCase):
     def _pending(self, responses):
@@ -56,6 +63,12 @@ class AggregateTests(unittest.TestCase):
         self.assertEqual(result["id"], "uuid_n_1")
         self.assertEqual([tool["name"] for tool in result["result"]["tools"]], ["x", "y"])
         self.assertEqual(set(result["result"]), {"tools"})
+
+    def test_empty_responses_return_internal_error(self):
+        pending = self._pending({})
+        result = ConnectionManager().aggregate_responses(pending)
+        self.assertEqual(result["error"]["code"], -32603)
+        self.assertNotIn("result", result)
 
 
 class PendingLifecycleTests(unittest.IsolatedAsyncioTestCase):
@@ -92,6 +105,35 @@ class PendingLifecycleTests(unittest.IsolatedAsyncioTestCase):
         manager.mcp_server_connections = {"agent": {"connection": connection}}
         self.assertFalse(await manager.forward_to_mcp_server("agent", "connection", {"id": 1}))
         self.assertNotIn("agent", manager.mcp_server_connections)
+
+
+class RegistryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_register_tools_stats_and_unregister(self):
+        manager = ConnectionManager()
+        websocket = SimpleNamespace(send_text=AsyncMock())
+        mcp_uuid = await manager.register_mcp_server_connection("agent", websocket)
+        manager.update_tool_list("agent", mcp_uuid, [{"name": "echo", "description": "e"}])
+        manager.update_server_info("agent", mcp_uuid, {"name": "fake"})
+
+        self.assertEqual(manager.find_tool_connection("agent", "echo"), mcp_uuid)
+        self.assertTrue(manager.is_mcp_server_connected("agent", mcp_uuid))
+        self.assertEqual(manager.get_agent_mcp_connections("agent"), [mcp_uuid])
+        self.assertEqual(manager.get_available_agents(), ["agent"])
+        self.assertEqual([tool["name"] for tool in manager.get_all_tools("agent")], ["echo"])
+        self.assertEqual(manager.get_agent_tools_summary("agent")["tools"][0]["name"], "echo")
+
+        robot_uuid = await manager.register_robot_connection("agent", websocket)
+        self.assertTrue(manager.is_robot_connected("agent"))
+        self.assertEqual(len(manager.get_robot_connections_by_agent("agent")), 1)
+        stats = manager.get_connection_stats()
+        self.assertEqual(stats["mcp_server_connections"], 1)
+        self.assertEqual(stats["robot_connections"], 1)
+        self.assertEqual(stats["total_tools"], 1)
+
+        await manager.unregister_robot_connection(robot_uuid)
+        await manager.unregister_mcp_server_connection("agent", mcp_uuid)
+        self.assertFalse(manager.is_robot_connected("agent"))
+        self.assertEqual(manager.get_available_agents(), [])
 
 
 class JSONRPCShapeTests(unittest.TestCase):

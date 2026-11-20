@@ -79,9 +79,11 @@ Docker 方式见 [mcp-bridge/docker-compose.example.yml](./mcp-bridge/docker-com
 
 ```bash
 python -m pip install -r requirements-dev.txt
-python -m unittest discover -s tests -p 'test_*.py' -v
+python -m coverage run -m unittest discover -s tests -p 'test_*.py' -v
+python -m coverage report -m
 ```
 
+覆盖率配置见 `.coveragerc`，CI 以 75% 为最低门槛；当前核心测试覆盖率约 79%。
 mcp-bridge 的测试单独运行，详见 [mcp-bridge/README.md](./mcp-bridge/README.md)。
 
 ## 技术细节
