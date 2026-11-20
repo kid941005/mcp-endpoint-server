@@ -1,6 +1,15 @@
 services:
   mcp-bridge:
     build: .
+    container_name: mcp-bridge
+    init: true
     env_file:
       - .env
     restart: unless-stopped
+    extra_hosts:
+      # Linux: allow the container to reach an endpoint server on the host.
+      - "host.docker.internal:host-gateway"
+    # stdio mode: this image only contains the bridge, not the MCP server.
+    # Add the server code/dependencies to the image, or mount them here:
+    # volumes:
+    #   - ./your-mcp-server:/app/server:ro

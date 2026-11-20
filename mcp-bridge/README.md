@@ -32,13 +32,8 @@ Bridge **不做 MCP 高层会话处理**：`initialize`、`tools/list`、`tools/
 
 ### 2. stdio
 
-```bash
-cp .env.example .env
-# 编辑 .env
-docker compose -f docker-compose.example.yml up -d --build
-```
-
-或直接运行：
+stdio 模式需要 bridge 启动真正的 MCP Server。Dockerfile 和示例 compose 只包含 bridge，
+不包含 MCP Server 代码和依赖；请先把 server 加入镜像或挂载到容器，或直接在宿主机运行：
 
 ```bash
 python -m pip install -r requirements.txt
@@ -48,6 +43,8 @@ export MCP_COMMAND=python
 export MCP_ARGS='["/app/server.py"]'
 python mcp_bridge.py
 ```
+
+Docker 方式见下方“Docker 运行”。
 
 ### 3. SSE
 
@@ -66,6 +63,23 @@ export MCP_TRANSPORT=streamable-http
 export MCP_URL='http://127.0.0.1:8080/mcp'
 python mcp_bridge.py
 ```
+
+## Docker 运行
+
+`docker-compose.example.yml` 只运行 bridge 本身：
+
+```bash
+cp .env.example .env
+# 编辑 .env
+docker compose -f docker-compose.example.yml up -d --build
+```
+
+- **SSE / Streamable HTTP**：只需在 `.env` 设置 `MCP_TRANSPORT` 和 `MCP_URL`。
+- **stdio**：需要把 MCP Server 的代码和依赖加入镜像或挂载到容器，否则
+  `MCP_COMMAND` 找不到 server；镜像本身只包含 `mcp_bridge.py`。
+- **endpoint server 也在 Docker 中**：`.env` 的 `MCP_ENDPOINT` 使用
+  `ws://host.docker.internal:8004/mcp_endpoint/mcp/?token=...`（compose 已配置
+  `extra_hosts` 兼容 Linux），或让两个容器加入同一 Docker 网络。
 
 ## 配置
 
