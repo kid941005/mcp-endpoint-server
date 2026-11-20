@@ -197,67 +197,69 @@ class ConnectionManager:
 
     async def forward_to_mcp_server(self, agent_id: str, mcp_connection_uuid: str, message: Any) -> bool:
         """转发消息给指定的MCP服务器"""
+        # 只在锁内查找连接，绝不在持锁期间执行网络 I/O。
         async with self._lock:
-            if agent_id not in self.mcp_server_connections:
+            agent_connections = self.mcp_server_connections.get(agent_id)
+            if not agent_connections:
                 logger.warning(f"智能体连接不存在: {agent_id}")
                 return False
-
-            if mcp_connection_uuid not in self.mcp_server_connections[agent_id]:
+            mcp_conn = agent_connections.get(mcp_connection_uuid)
+            if mcp_conn is None:
                 logger.warning(f"MCP服务器连接不存在: {agent_id} (UUID: {mcp_connection_uuid})")
                 return False
 
-            mcp_conn = self.mcp_server_connections[agent_id][mcp_connection_uuid]
-            try:
-                # 确保消息是字符串格式
-                if isinstance(message, dict):
-                    message_str = json.dumps(message, ensure_ascii=False)
-                elif isinstance(message, str):
-                    message_str = message
-                else:
-                    message_str = str(message)
+        if isinstance(message, dict):
+            message_str = json.dumps(message, ensure_ascii=False)
+        elif isinstance(message, str):
+            message_str = message
+        else:
+            message_str = str(message)
 
-                await mcp_conn.websocket.send_text(message_str)
-                logger.debug(f"消息已转发给MCP服务器 {agent_id} (UUID: {mcp_connection_uuid}): {message_str}")
-                return True
-            except ConnectionClosed:
-                logger.warning(f"MCP服务器连接已关闭: {agent_id} (UUID: {mcp_connection_uuid})")
-                await self.unregister_mcp_server_connection(agent_id, mcp_connection_uuid)
-                return False
-            except Exception as e:
-                logger.error(f"转发消息给MCP服务器失败: {e}")
-                return False
+        try:
+            await asyncio.wait_for(mcp_conn.websocket.send_text(message_str), timeout=5.0)
+            logger.debug(f"消息已转发给MCP服务器 {agent_id} (UUID: {mcp_connection_uuid}): {message_str}")
+            return True
+        except (ConnectionClosed, asyncio.TimeoutError):
+            logger.warning(f"MCP服务器连接已关闭: {agent_id} (UUID: {mcp_connection_uuid})")
+            # 此处已释放 _lock，unregister 可以安全地重新获取锁。
+            await self.unregister_mcp_server_connection(agent_id, mcp_connection_uuid)
+            return False
+        except Exception as e:
+            logger.error(f"转发消息给MCP服务器失败: {e}")
+            return False
 
     async def forward_to_robot_by_uuid(
         self, connection_uuid: str, message: Any
     ) -> bool:
         """根据UUID转发消息给特定的小智端连接"""
+        # 只在锁内查找连接，绝不在持锁期间执行网络 I/O。
         async with self._lock:
-            if connection_uuid not in self.robot_connections:
+            robot_conn = self.robot_connections.get(connection_uuid)
+            if robot_conn is None:
                 logger.warning(f"小智端连接不存在: {connection_uuid}")
                 return False
 
-            robot_conn = self.robot_connections[connection_uuid]
-            try:
-                # 确保消息是字符串格式
-                if isinstance(message, dict):
-                    message_str = json.dumps(message, ensure_ascii=False)
-                elif isinstance(message, str):
-                    message_str = message
-                else:
-                    message_str = str(message)
+        if isinstance(message, dict):
+            message_str = json.dumps(message, ensure_ascii=False)
+        elif isinstance(message, str):
+            message_str = message
+        else:
+            message_str = str(message)
 
-                await robot_conn.websocket.send_text(message_str)
-                logger.debug(
-                    f"消息已转发给小智端 {robot_conn.agent_id} (UUID: {connection_uuid}): {message_str}"
-                )
-                return True
-            except ConnectionClosed:
-                logger.warning(f"小智端连接已关闭: {connection_uuid}")
-                await self.unregister_robot_connection(connection_uuid)
-                return False
-            except Exception as e:
-                logger.error(f"转发消息给小智端失败: {e}")
-                return False
+        try:
+            await asyncio.wait_for(robot_conn.websocket.send_text(message_str), timeout=5.0)
+            logger.debug(
+                f"消息已转发给小智端 {robot_conn.agent_id} (UUID: {connection_uuid}): {message_str}"
+            )
+            return True
+        except (ConnectionClosed, asyncio.TimeoutError):
+            logger.warning(f"小智端连接已关闭: {connection_uuid}")
+            # 此处已释放 _lock，unregister 可以安全地重新获取锁。
+            await self.unregister_robot_connection(connection_uuid)
+            return False
+        except Exception as e:
+            logger.error(f"转发消息给小智端失败: {e}")
+            return False
 
     def register_pending_response(self, transformed_request_id: str, request_id: Any, connection_uuid: str, expected_connections: List[str]):
         """注册待处理的响应"""
