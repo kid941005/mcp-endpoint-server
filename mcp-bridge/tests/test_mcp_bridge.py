@@ -348,19 +348,30 @@ class HttpTransportIntegrationTests(unittest.IsolatedAsyncioTestCase):
         await self._run_case("streamable-http", "/mcp")
 
 
+class _NullResultMessage:
+    """Stand-in for an upstream message carrying result=null.
+
+    The pinned MCP SDK types JSONRPCResponse.result as a dict, so such a message
+    cannot be built with JSONRPCMessage; the wire policy still has to be defined.
+    """
+
+    def model_dump_json(self, by_alias: bool = True) -> str:
+        return '{"jsonrpc": "2.0", "id": null, "result": null}'
+
+
 class WirePayloadTests(unittest.TestCase):
-    """_dump_message must keep a null result but drop null id/error."""
+    """_dump_message keeps result even when null; only null id/error are dropped."""
 
     def _dump(self, raw):
         message = mcp_bridge.JSONRPCMessage.model_validate(raw)
         return json.loads(mcp_bridge._dump_message(message))
 
-    def test_null_result_is_preserved(self):
-        payload = self._dump({"jsonrpc": "2.0", "id": 1, "result": None})
+    def test_null_result_is_preserved_and_null_id_dropped(self):
+        payload = json.loads(mcp_bridge._dump_message(_NullResultMessage()))
         self.assertIn("result", payload)
         self.assertIsNone(payload["result"])
+        self.assertNotIn("id", payload)
         self.assertNotIn("error", payload)
-        self.assertEqual(payload["id"], 1)
 
     def test_notification_drops_null_id_and_error(self):
         payload = self._dump({"jsonrpc": "2.0", "method": "notifications/initialized"})
@@ -368,12 +379,17 @@ class WirePayloadTests(unittest.TestCase):
         self.assertNotIn("error", payload)
         self.assertEqual(payload["method"], "notifications/initialized")
 
-    def test_error_response_keeps_error_and_drops_null_result(self):
+    def test_error_response_keeps_error(self):
         payload = self._dump(
             {"jsonrpc": "2.0", "id": 2, "error": {"code": -32601, "message": "nope"}}
         )
         self.assertEqual(payload["error"]["code"], -32601)
         self.assertNotIn("result", payload)
+
+    def test_result_dict_is_kept_intact(self):
+        payload = self._dump({"jsonrpc": "2.0", "id": 3, "result": {"ok": True}})
+        self.assertEqual(payload["result"], {"ok": True})
+        self.assertNotIn("error", payload)
 
 if __name__ == "__main__":
     unittest.main()
