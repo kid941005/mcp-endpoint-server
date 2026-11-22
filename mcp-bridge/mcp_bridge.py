@@ -324,13 +324,15 @@ def _make_httpx_client_factory(cfg: BridgeConfig):
 def _dump_message(message: Any) -> str:
     """Serialize an MCP message to JSON-RPC wire text.
 
-    Only null-valued id / error fields are dropped (a notification has no id,
-    and a success response must not carry a null error).  result is kept even
-    when it is null: {"jsonrpc":"2.0","id":1,"result":null} is a valid response,
-    and stripping it would leave a message with neither result nor error.
+    Only null-valued id / error / params fields are dropped: a notification has
+    no id, a success response must not carry a null error, and JSON-RPC 2.0
+    requires params (when present) to be a structured value, so a request or
+    notification without arguments must omit it instead of sending params:null.
+    result is kept even when it is null: {"jsonrpc":"2.0","id":1,"result":null}
+    is a valid response, and stripping it would leave neither result nor error.
     """
     data = json.loads(message.model_dump_json(by_alias=True))
-    for key in ("id", "error"):
+    for key in ("id", "error", "params"):
         if data.get(key) is None:
             data.pop(key, None)
     return json.dumps(data, ensure_ascii=False)

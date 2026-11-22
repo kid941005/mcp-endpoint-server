@@ -360,7 +360,7 @@ class _NullResultMessage:
 
 
 class WirePayloadTests(unittest.TestCase):
-    """_dump_message keeps result even when null; only null id/error are dropped."""
+    """_dump_message keeps result even when null; only null id/error/params are dropped."""
 
     def _dump(self, raw):
         message = mcp_bridge.JSONRPCMessage.model_validate(raw)
@@ -385,6 +385,18 @@ class WirePayloadTests(unittest.TestCase):
         )
         self.assertEqual(payload["error"]["code"], -32601)
         self.assertNotIn("result", payload)
+
+    def test_params_null_is_dropped_for_argumentless_request(self):
+        payload = self._dump({"jsonrpc": "2.0", "id": 5, "method": "roots/list"})
+        self.assertNotIn("params", payload)
+        self.assertEqual(payload["method"], "roots/list")
+        self.assertEqual(payload["id"], 5)
+
+    def test_params_object_is_kept_intact(self):
+        payload = self._dump(
+            {"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {"name": "echo"}}
+        )
+        self.assertEqual(payload["params"], {"name": "echo"})
 
     def test_result_dict_is_kept_intact(self):
         payload = self._dump({"jsonrpc": "2.0", "id": 3, "result": {"ok": True}})
