@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import io
 import json
 import os
 import socket
@@ -15,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import mcp_bridge  # noqa: E402
+import healthcheck as mcp_bridge_healthcheck  # noqa: E402
 
 try:
     import websockets
@@ -559,6 +561,125 @@ class InboundRelayTests(unittest.IsolatedAsyncioTestCase):
                 {"jsonrpc": "2.0", "id": 1, "error": None}
             )
         )
+
+
+class ShellArgsTests(unittest.TestCase):
+    def test_windows_style_backslash_path_survives(self):
+        with patch.object(mcp_bridge.os, "name", "nt"):
+            args = mcp_bridge._split_shell_args(r'C:\tools\server.py --flag')
+        self.assertEqual(args, [r"C:\tools\server.py", "--flag"])
+
+    def test_quoted_token_keeps_inner_spaces(self):
+        with patch.object(mcp_bridge.os, "name", "nt"):
+            args = mcp_bridge._split_shell_args(r'"C:\Program Files\srv.py" --port 1')
+        self.assertEqual(args, [r"C:\Program Files\srv.py", "--port", "1"])
+
+    def test_posix_quote_error_is_config_error(self):
+        with patch.object(mcp_bridge.os, "name", "posix"):
+            with self.assertRaises(mcp_bridge.ConfigError):
+                mcp_bridge.BridgeConfig.from_env({
+                    "MCP_ENDPOINT": "ws://127.0.0.1:8004/mcp_endpoint/mcp/?token=abc",
+                    "MCP_COMMAND": "python",
+                    "MCP_ARGS": 'server.py "--oops',
+                })
+
+
+class EnvIsolationTests(unittest.TestCase):
+    def test_supplied_env_mapping_is_used_verbatim(self):
+        source = {
+            "MCP_ENDPOINT": "ws://127.0.0.1:8004/mcp_endpoint/mcp/?token=abc",
+            "MCP_COMMAND": "python",
+            "MCP_ENV": '{"FOO":"bar"}',
+            "PATH": "/usr/bin",
+        }
+        cfg = mcp_bridge.BridgeConfig.from_env(source)
+        self.assertEqual(cfg.env["FOO"], "bar")
+        self.assertEqual(cfg.env["PATH"], "/usr/bin")
+        # Nothing beyond the supplied mapping plus MCP_ENV overrides leaks in;
+        # a host-env copy would drag in far more keys than the four below.
+        self.assertEqual(set(cfg.env), set(source) | {"FOO"})
+
+
+class _FakeProc:
+    """Stands in for /proc without touching the filesystem."""
+
+    def __init__(self, mapping):
+        self.mapping = mapping
+
+    def listdir(self, root):
+        return list(self.mapping) + ["self"]
+
+    def open(self, path, mode="rb"):
+        pid = str(path).replace("\\", "/").split("/")[-2]
+        if pid not in self.mapping:
+            raise FileNotFoundError(path)
+        return io.BytesIO(self.mapping[pid])
+
+
+class HealthcheckTests(unittest.TestCase):
+    def test_unreadable_proc_root_reports_unhealthy(self):
+        def boom(root):
+            raise OSError("no /proc here")
+
+        with patch.object(mcp_bridge_healthcheck.os, "listdir", boom):
+            self.assertFalse(mcp_bridge_healthcheck.bridge_running())
+
+    def test_bridge_process_is_detected(self):
+        proc = _FakeProc({"4242": b"python\x00-u\x00mcp_bridge.py\x00"})
+        with patch.object(mcp_bridge_healthcheck.os, "listdir", proc.listdir), patch(
+            "builtins.open", proc.open
+        ):
+            self.assertTrue(mcp_bridge_healthcheck.bridge_running("/proc"))
+
+    def test_unrelated_process_is_not_health(self):
+        proc = _FakeProc({"7": b"python\x00-c\x00pass\x00"})
+        with patch.object(mcp_bridge_healthcheck.os, "listdir", proc.listdir), patch(
+            "builtins.open", proc.open
+        ):
+            self.assertFalse(mcp_bridge_healthcheck.bridge_running("/proc"))
+
+
+class ReconnectBackoffTests(unittest.IsolatedAsyncioTestCase):
+    async def test_backoff_doubles_then_caps_at_reconnect_max(self):
+        stop = asyncio.Event()
+        waits: list[float] = []
+
+        async def fake_run_once(cfg, stop_event=None):
+            raise RuntimeError("connection refused")
+
+        async def fake_wait_for(awaitable, timeout):
+            waits.append(timeout)
+            close = getattr(awaitable, "close", None)
+            if close is not None:
+                close()
+            if len(waits) >= 3:
+                stop.set()
+            raise asyncio.TimeoutError
+
+        cfg = mcp_bridge.BridgeConfig.from_env({
+            "MCP_ENDPOINT": "ws://127.0.0.1:8004/mcp_endpoint/mcp/?token=abc",
+            "MCP_COMMAND": "python",
+            "MCP_RECONNECT_INITIAL": "0.1",
+            "MCP_RECONNECT_MAX": "0.25",
+        })
+        real_wait_for = asyncio.wait_for
+        with patch.object(mcp_bridge, "run_once", fake_run_once), patch.object(
+            mcp_bridge.asyncio, "wait_for", fake_wait_for
+        ):
+            await real_wait_for(mcp_bridge.run_forever(cfg, stop), timeout=5)
+
+        self.assertEqual(waits[:3], [0.1, 0.2, 0.25])
+
+
+class TestDoubleGuardTests(unittest.TestCase):
+    def test_fake_fastmcp_rejects_missing_arguments(self):
+        sys.path.insert(0, str(ROOT / "tests"))
+        try:
+            import fake_fastmcp_server
+        finally:
+            sys.path.pop(0)
+        self.assertEqual(fake_fastmcp_server.main([]), 2)
+        self.assertEqual(fake_fastmcp_server.main(["stdio", "not-a-port"]), 2)
 
 
 if __name__ == "__main__":

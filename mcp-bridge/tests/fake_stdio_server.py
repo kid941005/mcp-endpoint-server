@@ -32,7 +32,9 @@ def main():
             continue
         method = request.get("method")
         request_id = request.get("id")
-        params = request.get("params") or {}
+        params = request.get("params")
+        if not isinstance(params, dict):
+            params = {}
 
         if method == "initialize":
             send({
@@ -49,7 +51,10 @@ def main():
         elif method == "tools/list":
             send({"jsonrpc": "2.0", "id": request_id, "result": {"tools": TOOLS}})
         elif method == "tools/call":
-            text = str(params.get("arguments", {}).get("text", ""))
+            arguments = params.get("arguments")
+            if not isinstance(arguments, dict):
+                arguments = {}
+            text = str(arguments.get("text", ""))
             send({
                 "jsonrpc": "2.0",
                 "id": request_id,

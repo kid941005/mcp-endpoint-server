@@ -89,9 +89,9 @@ docker compose -f docker-compose.example.yml up -d --build
 | `MCP_TRANSPORT` | 否 | `stdio` | `stdio` / `sse` / `streamable-http`（`http` 为别名） |
 | `MCP_SERVER_NAME` | 否 | `mcp` | 日志名称 |
 | `MCP_COMMAND` | stdio 是 | - | 可执行文件，如 `python`、`node` |
-| `MCP_ARGS` | 否 | `[]` | JSON 数组优先，也支持 shell 风格字符串 |
+| `MCP_ARGS` | 否 | `[]` | JSON 数组优先，也支持 shell 风格字符串；Windows 路径必须用 JSON 数组（shell 解析会把反斜杠当转义） |
 | `MCP_CWD` | 否 | 当前目录 | stdio 子进程工作目录 |
-| `MCP_ENV` | 否 | - | JSON 对象，追加到子进程环境变量 |
+| `MCP_ENV` | 否 | - | JSON 对象，追加到子进程环境变量；子进程默认继承 bridge 进程的全部环境变量（含其中的密钥），需要隔离请用干净的父环境启动 bridge |
 | `MCP_URL` | SSE/HTTP 是 | - | MCP Server URL |
 | `MCP_HEADERS` | 否 | `{}` | JSON 对象，HTTP 请求头 |
 | `MCP_TIMEOUT` | 否 | `30` | 连接/HTTP 超时秒数 |
@@ -132,6 +132,8 @@ python -m unittest discover -s tests -p 'test_mcp_bridge.py' -v
 
 - `/mcp/` 和 `/call/` 必须使用同一个 token/agentId，否则会提示工具端未连接。
 - stdio 子进程的 stdout 只能输出 MCP JSON-RPC；日志请写 stderr。
+- stdio 子进程会继承当前进程的完整环境变量，`MCP_ENV` 只做追加；不想让 MCP Server 看到宿主密钥时，用最小化环境启动 bridge。
+- `MCP_ARGS` 的 shell 风格字符串在 Windows 上可能吃掉反斜杠路径，建议始终写 JSON 数组。
 - SSE 是旧传输，优先使用 Streamable HTTP。
 - 日志不会打印 token；`--print-config` 也会隐藏 endpoint 的 token、headers 值，以及 `MCP_ARGS` 里 `--token`/`--key`/`--secret`/`--password` 类参数的值（`--token xxx` 与 `--token=xxx` 都覆盖）。
 - SSE / Streamable HTTP 默认不读取代理环境变量；需要走 `HTTP_PROXY` 时设置 `MCP_HTTP_TRUST_ENV=1`。

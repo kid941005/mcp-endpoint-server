@@ -126,7 +126,10 @@ class BridgeConfig:
             cfg.args = _args_value(source, "MCP_ARGS")
             cfg.cwd = _get(source, "MCP_CWD") or None
             overrides = _json_object(source, "MCP_ENV")
-            merged = dict(os.environ)
+            # Keep an explicitly supplied mapping isolated from the host env so
+            # tests and embedded callers do not inherit unrelated secrets.
+            base_env = dict(os.environ) if env is None else dict(env)
+            merged = dict(base_env)
             merged.update({str(k): str(v) for k, v in overrides.items()})
             cfg.env = merged
         else:
@@ -222,11 +225,30 @@ def _args_value(env: Mapping[str, str], key: str) -> list[str]:
             raise ConfigError(f"{key} must be a JSON array of strings")
         return value
     try:
-        return shlex.split(raw)
+        return _split_shell_args(raw)
     except ValueError as exc:
         raise ConfigError(
             f"{key} must be a JSON array or a shell-like string"
         ) from exc
+
+
+def _split_shell_args(raw: str) -> list[str]:
+    """Split a shell-like MCP_ARGS string without mangling Windows paths.
+
+    POSIX shlex treats backslashes as escapes, so C:\\dir\\server.py loses its
+    separators on Windows. Parse without unquoting there and strip one layer of
+    surrounding quotes from each token. A JSON array avoids the ambiguity and is
+    the recommended form on every platform.
+    """
+    if os.name != "nt":
+        return shlex.split(raw)
+    tokens = shlex.split(raw, posix=False)
+    stripped: list[str] = []
+    for token in tokens:
+        if len(token) >= 2 and token[0] == token[-1] and token[0] in "\"'":
+            token = token[1:-1]
+        stripped.append(token)
+    return stripped
 
 
 def redact_url(url: str) -> str:

@@ -8,9 +8,17 @@ import sys
 from mcp.server.fastmcp import FastMCP
 
 
-def main() -> int:
-    transport = sys.argv[1]
-    port = int(sys.argv[2])
+def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if len(argv) < 2:
+        print("usage: fake_fastmcp_server.py <transport> <port>", file=sys.stderr)
+        return 2
+    transport = argv[0]
+    try:
+        port = int(argv[1])
+    except ValueError:
+        print(f"invalid port: {argv[1]!r}", file=sys.stderr)
+        return 2
     server = FastMCP("fake-fastmcp", host="127.0.0.1", port=port)
 
     @server.tool()
