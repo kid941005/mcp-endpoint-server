@@ -133,5 +133,5 @@ python -m unittest discover -s tests -p 'test_mcp_bridge.py' -v
 - `/mcp/` 和 `/call/` 必须使用同一个 token/agentId，否则会提示工具端未连接。
 - stdio 子进程的 stdout 只能输出 MCP JSON-RPC；日志请写 stderr。
 - SSE 是旧传输，优先使用 Streamable HTTP。
-- 日志不会打印 token；`--print-config` 也会隐藏 endpoint 的 token 和 headers 值。
+- 日志不会打印 token；`--print-config` 也会隐藏 endpoint 的 token、headers 值，以及 `MCP_ARGS` 里 `--token`/`--key`/`--secret`/`--password` 类参数的值（`--token xxx` 与 `--token=xxx` 都覆盖）。
 - SSE / Streamable HTTP 默认不读取代理环境变量；需要走 `HTTP_PROXY` 时设置 `MCP_HTTP_TRUST_ENV=1`。

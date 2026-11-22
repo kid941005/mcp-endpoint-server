@@ -221,7 +221,12 @@ def _args_value(env: Mapping[str, str], key: str) -> list[str]:
         if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
             raise ConfigError(f"{key} must be a JSON array of strings")
         return value
-    return shlex.split(raw)
+    try:
+        return shlex.split(raw)
+    except ValueError as exc:
+        raise ConfigError(
+            f"{key} must be a JSON array or a shell-like string"
+        ) from exc
 
 
 def redact_url(url: str) -> str:
@@ -452,9 +457,48 @@ def configure_logging(level: str) -> None:
     )
 
 
+_ARG_SECRET_FLAGS = frozenset({
+    "--token",
+    "--key",
+    "--api-key",
+    "--api_key",
+    "--apikey",
+    "--access-token",
+    "--access_token",
+    "--secret",
+    "--password",
+})
+
+
+def _redact_args(args: list[str]) -> list[str]:
+    """Mask values of token-like CLI flags before printing a config.
+
+    Secrets are often passed positionally (--token value) or inline
+    (--token=value); both forms are covered so --print-config stays safe.
+    """
+    redacted: list[str] = []
+    mask_next = False
+    for item in args:
+        if mask_next:
+            redacted.append("***")
+            mask_next = False
+            continue
+        flag, sep, _value = item.partition("=")
+        if flag.lower() in _ARG_SECRET_FLAGS:
+            if sep:
+                redacted.append(flag + "=***")
+            else:
+                redacted.append(item)
+                mask_next = True
+            continue
+        redacted.append(item)
+    return redacted
+
+
 def _public_config(cfg: BridgeConfig) -> dict[str, Any]:
     data = asdict(cfg)
     data["endpoint"] = redact_url(cfg.endpoint)
+    data["args"] = _redact_args(cfg.args)
     data["headers"] = {key: "***" for key in cfg.headers}
     if cfg.env is not None:
         data["env"] = {key: "***" for key in cfg.env}

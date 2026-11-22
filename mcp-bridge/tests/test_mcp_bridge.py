@@ -90,6 +90,27 @@ class ConfigTests(unittest.TestCase):
         })
         self.assertEqual(cfg.args, ["server.py", "--flag", "value"])
 
+    def test_unclosed_quote_in_args_is_a_config_error(self):
+        with self.assertRaises(mcp_bridge.ConfigError):
+            mcp_bridge.BridgeConfig.from_env({
+                "MCP_ENDPOINT": "ws://127.0.0.1:8004/mcp_endpoint/mcp/?token=abc",
+                "MCP_COMMAND": "python",
+                "MCP_ARGS": 'server.py "--unterminated',
+            })
+
+    def test_print_config_redacts_secret_args(self):
+        cfg = mcp_bridge.BridgeConfig.from_env({
+            "MCP_ENDPOINT": "ws://127.0.0.1:8004/mcp_endpoint/mcp/?token=abc",
+            "MCP_COMMAND": "python",
+            "MCP_ARGS": '["server.py", "--token", "s3cret", "--key=inline", "--verbose"]',
+        })
+        args = mcp_bridge._public_config(cfg)["args"]
+        self.assertEqual(
+            args, ["server.py", "--token", "***", "--key=***", "--verbose"]
+        )
+        self.assertNotIn("s3cret", str(args))
+        self.assertNotIn("inline", str(args))
+
 
 class TransportSelectionTests(unittest.IsolatedAsyncioTestCase):
     async def test_sse_transport_parameters(self):
