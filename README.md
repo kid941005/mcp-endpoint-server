@@ -67,8 +67,9 @@ Docker 方式见 [mcp-bridge/docker-compose.example.yml](./mcp-bridge/docker-com
 ## 接口与安全
 
 - `GET /mcp_endpoint/`：服务信息（版本、运行状态）。
-- `GET /mcp_endpoint/health?key=<server_key>`：健康检查。
-- `GET /mcp_endpoint/stats?key=<server_key>`：连接数与待处理请求统计。
+- `GET /mcp_endpoint/health`：健康检查，请求头需带 `Authorization: Bearer <server_key>`。
+- `GET /mcp_endpoint/stats`：连接数与待处理请求统计，鉴权方式同上。
+- 旧写法 `?key=<server_key>` 兼容保留一个发布周期（命中时日志会提示废弃），下个周期移除；请求头优先于 query。
 - 请求方与工具端连接均校验 token；服务端日志不会输出明文 token 或 server key。
 - `allowed_origins` 支持逗号分隔多个来源；设置为 `*` 时自动关闭 CORS credentials。
 - token 已经过 URL 编码，接入时不要再次编码；AES-ECB 为兼容既有 token 协议保留。

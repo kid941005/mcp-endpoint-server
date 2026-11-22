@@ -12,6 +12,7 @@ class HttpEndpointTests(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(app)
         self.key = config.get("server", "key")
+        self.auth_headers = {"Authorization": f"Bearer {self.key}"}
 
     def test_root_reports_running(self):
         response = self.client.get("/mcp_endpoint/")
@@ -23,7 +24,31 @@ class HttpEndpointTests(unittest.TestCase):
         body = self.client.get("/mcp_endpoint/health").json()
         self.assertEqual(body["error"]["code"], -32004)
 
-    def test_health_accepts_valid_key(self):
+    def test_health_accepts_bearer_header(self):
+        body = self.client.get("/mcp_endpoint/health", headers=self.auth_headers).json()
+        self.assertEqual(body["result"]["status"], "success")
+
+    def test_health_accepts_raw_key_header(self):
+        body = self.client.get(
+            "/mcp_endpoint/health", headers={"Authorization": self.key}
+        ).json()
+        self.assertEqual(body["result"]["status"], "success")
+
+    def test_health_rejects_wrong_header_key(self):
+        body = self.client.get(
+            "/mcp_endpoint/health", headers={"Authorization": "Bearer wrong-key"}
+        ).json()
+        self.assertEqual(body["error"]["code"], -32004)
+
+    def test_header_takes_precedence_over_query(self):
+        body = self.client.get(
+            "/mcp_endpoint/health",
+            params={"key": self.key},
+            headers={"Authorization": "Bearer wrong-key"},
+        ).json()
+        self.assertEqual(body["error"]["code"], -32004)
+
+    def test_health_still_accepts_query_key_for_compat(self):
         body = self.client.get("/mcp_endpoint/health", params={"key": self.key}).json()
         self.assertEqual(body["result"]["status"], "success")
 
@@ -32,11 +57,15 @@ class HttpEndpointTests(unittest.TestCase):
         self.assertEqual(body["error"]["code"], -32004)
 
     def test_stats_returns_connection_shape(self):
-        body = self.client.get("/mcp_endpoint/stats", params={"key": self.key}).json()
+        body = self.client.get("/mcp_endpoint/stats", headers=self.auth_headers).json()
         result = body["result"]
         self.assertIn("mcp_server_connections", result)
         self.assertIn("robot_connections", result)
         self.assertIn("total_tools", result)
+
+    def test_stats_still_accepts_query_key_for_compat(self):
+        body = self.client.get("/mcp_endpoint/stats", params={"key": self.key}).json()
+        self.assertEqual(body["result"]["status"], "success")
 
 
 class WebSocketAuthTests(unittest.TestCase):

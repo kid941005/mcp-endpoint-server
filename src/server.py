@@ -21,7 +21,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from .core.connection_manager import connection_manager
 from .handlers.websocket_handler import websocket_handler
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Header, WebSocket, WebSocketDisconnect
 
 logger = get_logger()
 
@@ -124,20 +124,58 @@ async def root():
     return JSONRPCProtocol.to_dict(response)
 
 
-def _is_authorized_key(key: Optional[str]) -> bool:
-    """常量时间校验 server.key，避免时序侧信道。"""
+def _extract_authorization_key(authorization: Optional[str]) -> Optional[str]:
+    """从 Authorization 头提取密钥，兼容 "Bearer <key>" 与裸密钥两种写法。"""
+    if not authorization:
+        return None
+    value = authorization.strip()
+    if not value:
+        return None
+    scheme, _, credentials = value.partition(" ")
+    if credentials and scheme.lower() == "bearer":
+        return credentials.strip() or None
+    return value
+
+
+_query_key_warning_emitted = False
+
+
+def _is_authorized_request(authorization: Optional[str], key: Optional[str]) -> bool:
+    """
+    常量时间校验 server.key，避免时序侧信道。
+
+    优先使用 Authorization 头；query 参数 key 仅为兼容旧调用方保留，
+    首次命中时打印一条废弃警告，兼容窗口结束后移除。
+    """
+    global _query_key_warning_emitted
     expected_key = config.get("server", "key", "")
-    return (
-        bool(key)
-        and bool(expected_key)
-        and hmac.compare_digest(str(key), str(expected_key))
-    )
+
+    header_key = _extract_authorization_key(authorization)
+    if header_key:
+        return bool(expected_key) and hmac.compare_digest(
+            str(header_key), str(expected_key)
+        )
+
+    if key:
+        if not _query_key_warning_emitted:
+            _query_key_warning_emitted = True
+            logger.warning(
+                "管理接口使用 query 参数 key 已废弃，请改用 Authorization 头；"
+                "query 兼容将在下一个发布周期移除"
+            )
+        return bool(expected_key) and hmac.compare_digest(str(key), str(expected_key))
+
+    return False
 
 
 @app.get("/mcp_endpoint/health")
-async def health_check(key: Optional[str] = None, agentid: Optional[str] = None):
-    """健康检查"""
-    if not _is_authorized_key(key):
+async def health_check(
+    authorization: Optional[str] = Header(default=None),
+    key: Optional[str] = None,
+    agentid: Optional[str] = None,
+):
+    """健康检查（Authorization: Bearer <server_key>；query key 兼容保留）"""
+    if not _is_authorized_request(authorization, key):
         response = JSONRPCProtocol.create_error_response(
             error_code=JSONRPCProtocol.AUTHENTICATION_ERROR,
             error_message="密钥验证失败",
@@ -158,9 +196,12 @@ async def health_check(key: Optional[str] = None, agentid: Optional[str] = None)
 
 
 @app.get("/mcp_endpoint/stats")
-async def stats(key: Optional[str] = None):
-    """连接与工具统计（需 server.key 授权）。"""
-    if not _is_authorized_key(key):
+async def stats(
+    authorization: Optional[str] = Header(default=None),
+    key: Optional[str] = None,
+):
+    """连接与工具统计（Authorization: Bearer <server_key>；query key 兼容保留）"""
+    if not _is_authorized_request(authorization, key):
         response = JSONRPCProtocol.create_error_response(
             error_code=JSONRPCProtocol.AUTHENTICATION_ERROR,
             error_message="密钥验证失败",
