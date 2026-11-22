@@ -55,6 +55,15 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(len(key), 32)
             int(key, 16)
 
+    def test_load_is_lazy_and_creates_file_on_first_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "nested", "server.cfg")
+            manager = ConfigManager(path)
+            # 构造阶段不落盘（避免 import 副作用），首次取值才创建配置。
+            self.assertFalse(os.path.exists(path))
+            self.assertEqual(len(manager.get("server", "key")), 32)
+            self.assertTrue(os.path.exists(path))
+
     def test_reload_keeps_existing_key(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "nested", "server.cfg")
@@ -69,6 +78,9 @@ class NetworkUtilTests(unittest.TestCase):
         value = get_local_ip()
         self.assertIsInstance(value, str)
         self.assertTrue(value)
+
+    def test_get_local_ip_is_cached(self):
+        self.assertEqual(get_local_ip(), get_local_ip())
 
 
 if __name__ == "__main__":

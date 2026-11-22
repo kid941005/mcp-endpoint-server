@@ -22,12 +22,13 @@ class InterceptHandler(logging.Handler):
         except ValueError:
             level = record.levelno
 
-        # 查找调用者（不同 Python/日志调用栈深度可能不足，需容错）
-        try:
-            frame, depth = sys._getframe(6), 6
-        except ValueError:
-            frame, depth = None, 0
-        while frame and frame.f_code.co_filename == __file__:
+        # 从当前帧向上跳过 logging 模块与本文件的帧，定位真实调用者。
+        # 不写死栈深度：Python 版本或日志实现变化时不会错位，也不会越界。
+        frame, depth = logging.currentframe(), 2
+        while frame is not None and frame.f_code.co_filename in (
+            logging.__file__,
+            __file__,
+        ):
             frame = frame.f_back
             depth += 1
 

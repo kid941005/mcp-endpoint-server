@@ -72,6 +72,10 @@ async def lifespan(app: FastAPI):
     logger.info(f"健康检查地址: http://{local_ip}:{port}/mcp_endpoint/health")
     logger.info(f"工具端 MCP 接入点: ws://{local_ip}:{port}/mcp_endpoint/mcp/")
     logger.info("server.key 与加密 token 已隐藏，请从配置文件读取，请勿泄露。")
+    if config.generated_key:
+        logger.warning(
+            "已自动生成新的 32 位 server.key 并写入配置文件（值不在日志中显示），请妥善保存。"
+        )
     yield
     # 关闭时
     logger.info("MCP Endpoint Server 正在关闭，释放连接与待处理请求...")
@@ -168,6 +172,16 @@ def _is_authorized_request(authorization: Optional[str], key: Optional[str]) -> 
     return False
 
 
+def _authentication_error_response() -> dict:
+    """管理接口鉴权失败响应（错误码与 MCP 端一致，便于客户端统一处理）。"""
+    response = JSONRPCProtocol.create_error_response(
+        error_code=JSONRPCProtocol.AUTHENTICATION_ERROR,
+        error_message="密钥验证失败",
+        error_data={"details": "提供的密钥无效或缺失"},
+    )
+    return JSONRPCProtocol.to_dict(response)
+
+
 @app.get("/mcp_endpoint/health")
 async def health_check(
     authorization: Optional[str] = Header(default=None),
@@ -176,12 +190,7 @@ async def health_check(
 ):
     """健康检查（Authorization: Bearer <server_key>；query key 兼容保留）"""
     if not _is_authorized_request(authorization, key):
-        response = JSONRPCProtocol.create_error_response(
-            error_code=JSONRPCProtocol.AUTHENTICATION_ERROR,
-            error_message="密钥验证失败",
-            error_data={"details": "提供的密钥无效或缺失"},
-        )
-        return JSONRPCProtocol.to_dict(response)
+        return _authentication_error_response()
 
     if agentid:
         response = JSONRPCProtocol.create_success_response(
@@ -202,12 +211,7 @@ async def stats(
 ):
     """连接与工具统计（Authorization: Bearer <server_key>；query key 兼容保留）"""
     if not _is_authorized_request(authorization, key):
-        response = JSONRPCProtocol.create_error_response(
-            error_code=JSONRPCProtocol.AUTHENTICATION_ERROR,
-            error_message="密钥验证失败",
-            error_data={"details": "提供的密钥无效或缺失"},
-        )
-        return JSONRPCProtocol.to_dict(response)
+        return _authentication_error_response()
 
     return JSONRPCProtocol.to_dict(
         JSONRPCProtocol.create_success_response(result=connection_manager.get_connection_stats())
@@ -236,12 +240,14 @@ async def websocket_tool_endpoint(websocket: WebSocket):
                 await websocket_handler._handle_mcp_server_message(agent_id, mcp_connection_uuid, message)
             except WebSocketDisconnect:
                 break
-            except Exception as e:
-                logger.error(f"处理MCP服务器消息时发生错误: {e}")
+            except Exception:
+                # 单条消息异常时记录完整堆栈并结束该连接（由 finally 统一注销），
+                # 避免半开连接继续占用该 agent 的工具槽位。
+                logger.exception("处理MCP服务器消息时发生错误，关闭该 MCP 连接")
                 break
 
-    except Exception as e:
-        logger.error(f"处理MCP服务器连接时发生错误: {e}")
+    except Exception:
+        logger.exception("处理MCP服务器连接时发生错误")
     finally:
         if mcp_connection_uuid:
             await connection_manager.unregister_mcp_server_connection(agent_id, mcp_connection_uuid)

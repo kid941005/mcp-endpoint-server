@@ -15,6 +15,18 @@ class ConfigManager:
     def __init__(self, config_file: str = "data/.mcp-endpoint-server.cfg"):
         self.config_file = config_file
         self.config = configparser.ConfigParser()
+        # 延迟加载：构造 ConfigManager 不读写磁盘，首次取值时才加载/创建配置，
+        # 避免 import 即产生文件副作用（也便于测试注入路径）。
+        self._loaded = False
+        # 本次加载是否自动生成了 server.key，由调用方（启动流程）决定如何提示，
+        # 避免在配置模块里直接 print。
+        self.generated_key = False
+
+    def _ensure_loaded(self):
+        """首次访问时才加载配置。"""
+        if self._loaded:
+            return
+        self._loaded = True
         self._load_config()
 
     def _load_config(self):
@@ -56,8 +68,8 @@ class ConfigManager:
                 self.config.set("server", "key", new_key)
                 with open(self.config_file, "w", encoding="utf-8") as f:
                     self.config.write(f)
-                # 绝不把密钥打印到 stdout/日志，避免泄露。
-                print("已自动生成新的 32 位密钥并写入配置文件（值不在日志中显示）。")
+                # 绝不把密钥打印到 stdout/日志，避免泄露；仅记录事件供启动流程提示。
+                self.generated_key = True
         except Exception as e:
             raise RuntimeError(f"检查或生成 server.key 失败: {e}") from e
 
@@ -99,6 +111,7 @@ class ConfigManager:
 
     def get(self, section: str, key: str, default: Optional[str] = None) -> str:
         """获取配置值"""
+        self._ensure_loaded()
         try:
             return self.config.get(section, key)
         except (configparser.NoSectionError, configparser.NoOptionError):
@@ -106,6 +119,7 @@ class ConfigManager:
 
     def getint(self, section: str, key: str, default: int = 0) -> int:
         """获取整数配置值"""
+        self._ensure_loaded()
         try:
             return self.config.getint(section, key)
         except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
@@ -113,13 +127,16 @@ class ConfigManager:
 
     def getboolean(self, section: str, key: str, default: bool = False) -> bool:
         """获取布尔配置值"""
+        self._ensure_loaded()
         try:
             return self.config.getboolean(section, key)
         except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
             return default
 
     def reload(self):
-        """重新加载配置"""
+        """重新加载配置（忽略延迟加载标记，强制重新读取）"""
+        self._loaded = True
+        self.generated_key = False
         self._load_config()
 
 

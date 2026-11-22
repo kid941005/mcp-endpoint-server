@@ -227,11 +227,3 @@ def create_forward_failed_error(
         request_id=request_id,
     )
     return JSONRPCProtocol.to_json(response, ensure_ascii=False)
-
-
-def create_authentication_error(message: str = "认证失败") -> str:
-    """创建认证错误消息"""
-    response = JSONRPCProtocol.create_error_response(
-        error_code=JSONRPCProtocol.AUTHENTICATION_ERROR, error_message=message
-    )
-    return JSONRPCProtocol.to_json(response, ensure_ascii=False)

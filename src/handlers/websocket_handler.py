@@ -103,8 +103,8 @@ class WebSocketHandler:
             
             # 更新连接管理器中的工具列表
             connection_manager.update_tool_list(agent_id, mcp_connection_uuid, tools)
-        except Exception as e:
-            logger.error(f"处理工具列表响应时发生错误: {e}")
+        except Exception:
+            logger.exception("处理工具列表响应时发生错误")
 
     def _handle_initialize_response(self, agent_id: str, mcp_connection_uuid: str, message_data: dict):
         """处理初始化响应"""
@@ -112,8 +112,8 @@ class WebSocketHandler:
             result = message_data.get("result", {})
             # 更新服务器信息
             connection_manager.update_server_info(agent_id, mcp_connection_uuid, result)
-        except Exception as e:
-            logger.error(f"处理初始化响应时发生错误: {e}")
+        except Exception:
+            logger.exception("处理初始化响应时发生错误")
 
     async def _handle_robot_message(
         self, agent_id: str, message: str, connection_uuid: str
@@ -355,8 +355,8 @@ class WebSocketHandler:
                     JSONRPCProtocol.INTERNAL_ERROR,
                     "处理工具调用请求时发生错误",
                 )
-            except Exception as reply_error:
-                logger.error(f"回送工具调用错误响应失败: {reply_error}")
+            except Exception:
+                logger.exception("回送工具调用错误响应失败")
 
 
 # 全局WebSocket处理器实例
