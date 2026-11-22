@@ -376,8 +376,13 @@ async def relay_ws_to_remote(websocket: Any, write_stream: Any, name: str) -> No
         LOG.debug("[%s] ws -> remote: %s", name, str(raw)[:800])
 
 
-async def run_once(cfg: BridgeConfig) -> None:
-    """Run one WebSocket + transport lifetime. Returns when either side closes."""
+async def run_once(cfg: BridgeConfig, stop_event: asyncio.Event | None = None) -> None:
+    """Run one WebSocket + transport lifetime.
+
+    Returns when either side closes, or as soon as stop_event is set so a
+    SIGINT/SIGTERM during an active connection tears down immediately instead
+    of waiting for the transport to fail on its own.
+    """
     LOG.info("[%s] connecting endpoint: %s", cfg.name, redact_url(cfg.endpoint))
     async with websockets.connect(
         cfg.endpoint,
@@ -398,15 +403,28 @@ async def run_once(cfg: BridgeConfig) -> None:
                     name=f"{cfg.name}-ws-to-remote",
                 ),
             ]
+            stop_task: asyncio.Task[bool] | None = None
+            waiting = set(tasks)
+            if stop_event is not None:
+                stop_task = asyncio.create_task(
+                    stop_event.wait(), name=f"{cfg.name}-stop"
+                )
+                waiting.add(stop_task)
             try:
                 done, _ = await asyncio.wait(
-                    tasks, return_when=asyncio.FIRST_COMPLETED
+                    waiting, return_when=asyncio.FIRST_COMPLETED
                 )
             finally:
                 for task in tasks:
                     task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
+                if stop_task is not None:
+                    stop_task.cancel()
+                    await asyncio.gather(stop_task, return_exceptions=True)
             for task in done:
+                if task is stop_task:
+                    LOG.info("[%s] stop requested; closing active connection", cfg.name)
+                    continue
                 exc = task.exception()
                 if exc is not None:
                     raise exc
@@ -418,8 +436,9 @@ async def run_forever(cfg: BridgeConfig, stop_event: asyncio.Event) -> None:
     while not stop_event.is_set():
         started = time.monotonic()
         try:
-            await run_once(cfg)
-            LOG.warning("[%s] bridge stopped (one side closed)", cfg.name)
+            await run_once(cfg, stop_event)
+            if not stop_event.is_set():
+                LOG.warning("[%s] bridge stopped (one side closed)", cfg.name)
         except asyncio.CancelledError:
             raise
         except Exception as exc:

@@ -424,5 +424,67 @@ class WirePayloadTests(unittest.TestCase):
         self.assertEqual(payload["result"], {"ok": True})
         self.assertNotIn("error", payload)
 
+class _FakeWebSocket:
+    async def send(self, payload):
+        return None
+
+
+class _FakeConnect:
+    async def __aenter__(self):
+        return _FakeWebSocket()
+
+    async def __aexit__(self, *_exc):
+        return False
+
+
+class StopTests(unittest.IsolatedAsyncioTestCase):
+    """B1: a stop signal must interrupt an active connection promptly."""
+
+    def _config(self):
+        return mcp_bridge.BridgeConfig.from_env({
+            "MCP_ENDPOINT": "ws://127.0.0.1:8004/mcp_endpoint/mcp/?token=abc",
+            "MCP_TRANSPORT": "stdio",
+            "MCP_COMMAND": "python",
+        })
+
+    async def test_run_once_returns_when_stop_event_set(self):
+        stop_event = asyncio.Event()
+
+        async def blocking_relay(*_args, **_kwargs):
+            await asyncio.sleep(3600)
+
+        @contextlib.asynccontextmanager
+        async def fake_transport(_cfg):
+            yield object(), object()
+
+        with patch.object(mcp_bridge.websockets, "connect",
+                          lambda *_a, **_k: _FakeConnect()), \
+                patch.object(mcp_bridge, "open_transport", fake_transport), \
+                patch.object(mcp_bridge, "relay_remote_to_ws", blocking_relay), \
+                patch.object(mcp_bridge, "relay_ws_to_remote", blocking_relay):
+            task = asyncio.create_task(mcp_bridge.run_once(self._config(), stop_event))
+            await asyncio.sleep(0.05)
+            self.assertFalse(task.done())
+            stop_event.set()
+            await asyncio.wait_for(task, 2.0)
+
+    async def test_run_forever_exits_after_stop(self):
+        stop_event = asyncio.Event()
+        calls = []
+
+        async def fake_run_once(_cfg, _stop_event=None):
+            calls.append(time.monotonic())
+            await _stop_event.wait()
+
+        with patch.object(mcp_bridge, "run_once", fake_run_once):
+            task = asyncio.create_task(
+                mcp_bridge.run_forever(self._config(), stop_event)
+            )
+            await asyncio.sleep(0.05)
+            stop_event.set()
+            await asyncio.wait_for(task, 2.0)
+        self.assertEqual(len(calls), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
