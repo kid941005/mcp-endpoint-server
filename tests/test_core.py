@@ -64,6 +64,27 @@ class AggregateTests(unittest.TestCase):
         self.assertEqual([tool["name"] for tool in result["result"]["tools"]], ["x", "y"])
         self.assertEqual(set(result["result"]), {"tools"})
 
+    def test_duplicate_tools_keep_lowest_uuid_and_meta(self):
+        pending = self._pending({
+            "b": {"jsonrpc": "2.0", "id": "uuid_n_1", "result": {
+                "tools": [{"name": "shared", "description": "from-b"}],
+            }},
+            "a": {"jsonrpc": "2.0", "id": "uuid_n_1", "result": {
+                "tools": [
+                    {"name": "shared", "description": "from-a"},
+                    {"name": "only-a", "description": "a"},
+                ],
+            }},
+        })
+        result = ConnectionManager().aggregate_responses(pending)
+        tools = result["result"]["tools"]
+        self.assertEqual([tool["name"] for tool in tools], ["only-a", "shared"])
+        shared = tools[1]
+        self.assertEqual(shared["description"], "from-a")
+        self.assertEqual(
+            shared["_meta"]["mcp-endpoint-server"]["shadowed_by"], ["b"]
+        )
+
     def test_multiple_non_tools_responses_keep_single_result(self):
         pending = self._pending({
             "a": {"jsonrpc": "2.0", "id": "uuid_n_1", "result": {"protocolVersion": "2024-11-05"}},

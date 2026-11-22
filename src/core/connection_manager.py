@@ -369,15 +369,35 @@ class ConnectionManager:
             content: List[Any] = []
             is_tools = False
             is_content = False
-            for result in successful:
-                if isinstance(result, dict) and "tools" in result:
+            # tools/list 直接面向客户端，必须与 get_all_tools 同语义：
+            # 同名工具只保留 UUID 最小的连接，被遮蔽的连接写入 _meta，
+            # 否则多工具端会把重复工具名原样拼给客户端，且列表与调用路由不一致。
+            tool_owners: Dict[str, List[str]] = {}
+            first_tool: Dict[str, Any] = {}
+            for mcp_connection_uuid in sorted(pending.received_responses):
+                result = pending.received_responses[mcp_connection_uuid].get("result")
+                if not isinstance(result, dict):
+                    continue
+                if "tools" in result:
                     is_tools = True
-                    tools.extend(result.get("tools") or [])
-                elif isinstance(result, dict) and "content" in result:
+                    for tool in result.get("tools") or []:
+                        tool_name = tool.get("name") if isinstance(tool, dict) else None
+                        if isinstance(tool_name, str):
+                            owners = tool_owners.setdefault(tool_name, [])
+                            if mcp_connection_uuid not in owners:
+                                owners.append(mcp_connection_uuid)
+                            first_tool.setdefault(tool_name, tool)
+                        else:
+                            tools.append(tool)
+                elif "content" in result:
                     is_content = True
                     content.extend(result.get("content") or [])
 
             if is_tools:
+                for tool_name in sorted(tool_owners):
+                    tools.append(
+                        self._with_shadow_meta(first_tool[tool_name], tool_owners[tool_name])
+                    )
                 aggregated = {"tools": tools}
             elif is_content:
                 aggregated = {"content": content}
