@@ -4,11 +4,17 @@ services:
     container_name: mcp-bridge
     init: true
     env_file:
-      - .env
+      # Optional: with Docker Compose >= 2.24 a missing .env is not fatal;
+      # on older compose drop `required: false` and always ship a .env.
+      - path: .env
+        required: false
     restart: unless-stopped
     extra_hosts:
       # Linux: allow the container to reach an endpoint server on the host.
       - "host.docker.internal:host-gateway"
+    # Health check comes from the image (mcp-bridge/healthcheck.py); no compose
+    # override needed. Inspect it with:
+    #   docker inspect --format '{{.State.Health.Status}}' mcp-bridge
     # stdio mode: this image only contains the bridge, not the MCP server.
     # Add the server code/dependencies to the image, or mount them here:
     # volumes:
