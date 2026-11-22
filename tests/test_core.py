@@ -184,5 +184,55 @@ class RobotParseTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("result", sent)
 
 
+class ToolConflictTests(unittest.IsolatedAsyncioTestCase):
+    async def _manager_with_conflict(self, low_first: bool):
+        manager = ConnectionManager()
+        websocket = SimpleNamespace(send_text=AsyncMock())
+        first = await manager.register_mcp_server_connection("agent", websocket)
+        second = await manager.register_mcp_server_connection("agent", websocket)
+        low, high = sorted([first, second])
+        order = [(low, "low"), (high, "high")] if low_first else [(high, "high"), (low, "low")]
+        for connection_uuid, label in order:
+            manager.update_tool_list(
+                "agent", connection_uuid, [{"name": "echo", "description": label}]
+            )
+        return manager, low, high
+
+    async def test_list_and_call_pick_same_connection(self):
+        manager, low, high = await self._manager_with_conflict(low_first=False)
+        tools = manager.get_all_tools("agent")
+        self.assertEqual([tool["name"] for tool in tools], ["echo"])
+        self.assertEqual(tools[0]["description"], "low")
+        self.assertEqual(tools[0]["_meta"]["mcp-endpoint-server"]["shadowed_by"], [high])
+        self.assertEqual(manager.find_tool_connection("agent", "echo"), low)
+        summary = manager.get_agent_tools_summary("agent")
+        self.assertEqual([tool["description"] for tool in summary["tools"]], ["low"])
+
+    async def test_registration_order_does_not_change_selection(self):
+        manager, low, _ = await self._manager_with_conflict(low_first=True)
+        self.assertEqual(manager.get_all_tools("agent")[0]["description"], "low")
+        self.assertEqual(
+            manager.get_agent_tools_summary("agent")["tools"][0]["description"], "low"
+        )
+        self.assertEqual(manager.find_tool_connection("agent", "echo"), low)
+
+    async def test_no_conflict_keeps_tool_untouched(self):
+        manager = ConnectionManager()
+        websocket = SimpleNamespace(send_text=AsyncMock())
+        connection_uuid = await manager.register_mcp_server_connection("agent", websocket)
+        manager.update_tool_list("agent", connection_uuid, [{"name": "echo"}])
+        self.assertNotIn("_meta", manager.get_all_tools("agent")[0])
+        self.assertNotIn("_meta", manager.get_agent_tools_summary("agent")["tools"][0])
+
+    async def test_stats_reports_tool_conflicts(self):
+        manager, low, high = await self._manager_with_conflict(low_first=False)
+        stats = manager.get_connection_stats()
+        self.assertEqual(stats["total_tools"], 2)
+        self.assertEqual(
+            stats["tool_conflicts"],
+            [{"agent_id": "agent", "tool": "echo", "uuids": [low, high]}],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

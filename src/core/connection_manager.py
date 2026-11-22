@@ -422,7 +422,7 @@ class ConnectionManager:
                     logger.warning(
                         f"检测到跨服务器同名工具: {agent_id} "
                         f"{mcp_connection_uuid} 与 {other_uuid}: {sorted(duplicated)}；"
-                        "tools/call 将路由到 UUID 较小的连接"
+                        "tools/call 与 tools/list 均取 UUID 最小的连接"
                     )
 
     def update_server_info(self, agent_id: str, mcp_connection_uuid: str, server_info: Dict[str, Any]):
@@ -432,26 +432,59 @@ class ConnectionManager:
             mcp_conn.server_info = server_info
             logger.debug(f"已更新服务器信息: {agent_id} (UUID: {mcp_connection_uuid})")
 
+    def _select_tool_connections(self, agent_id: str, tool_name: str) -> List[str]:
+        """返回暴露该工具名的连接 UUID（按 UUID 排序）。
+
+        tools/list 的去重与 tools/call 的路由共用这一顺序，
+        保证客户端看到的工具与调用实际打到的服务器是同一台。
+        """
+        servers = self.mcp_server_connections.get(agent_id) or {}
+        return sorted(
+            mcp_connection_uuid
+            for mcp_connection_uuid, mcp_conn in servers.items()
+            if tool_name in mcp_conn.tools
+        )
+
+    @staticmethod
+    def _with_shadow_meta(
+        tool_info: Dict[str, Any], connection_uuids: List[str]
+    ) -> Dict[str, Any]:
+        """同名工具被遮蔽时附加 _meta 说明；不改 name/description/inputSchema。
+
+        客户端可忽略未知 _meta，因此对现有客户端零影响，仅供运维追溯。
+        """
+        if len(connection_uuids) <= 1:
+            return tool_info
+        shadowed = dict(tool_info)
+        meta = dict(shadowed.get("_meta") or {})
+        meta["mcp-endpoint-server"] = {"shadowed_by": connection_uuids[1:]}
+        shadowed["_meta"] = meta
+        return shadowed
+
     def get_all_tools(self, agent_id: str) -> List[Dict[str, Any]]:
-        """获取指定智能体的所有可用工具列表"""
-        all_tools = []
-        if agent_id in self.mcp_server_connections:
-            for _, mcp_conn in self.mcp_server_connections[agent_id].items():
-                for _, tool_info in mcp_conn.tools.items():
-                    all_tools.append(tool_info)
-        return all_tools
+        """获取指定智能体的所有可用工具列表（同名工具只保留 UUID 最小者）"""
+        servers = self.mcp_server_connections.get(agent_id) or {}
+        tools_by_name: Dict[str, Dict[str, Any]] = {}
+        for mcp_connection_uuid in sorted(servers):
+            for tool_name, tool_info in servers[mcp_connection_uuid].tools.items():
+                if tool_name in tools_by_name:
+                    continue
+                tools_by_name[tool_name] = self._with_shadow_meta(
+                    tool_info, self._select_tool_connections(agent_id, tool_name)
+                )
+        return [tools_by_name[tool_name] for tool_name in sorted(tools_by_name)]
 
     def get_agent_tools_summary(self, agent_id: str) -> Dict[str, Any]:
-        """获取指定智能体的工具汇总信息"""
-        tools_by_name: Dict[str, Dict[str, Any]] = {}
-
-        if agent_id in self.mcp_server_connections:
-            for _, mcp_conn in self.mcp_server_connections[agent_id].items():
-                for tool_name, tool_info in mcp_conn.tools.items():
-                    if tool_name not in tools_by_name:
-                        tools_by_name[tool_name] = tool_info
-
-        tools = [tools_by_name[tool_name] for tool_name in sorted(tools_by_name.keys())]
+        """获取指定智能体的工具汇总信息（同名工具保留 UUID 最小的连接）"""
+        servers = self.mcp_server_connections.get(agent_id) or {}
+        tool_names = sorted(
+            {tool_name for mcp_conn in servers.values() for tool_name in mcp_conn.tools}
+        )
+        tools = []
+        for tool_name in tool_names:
+            connection_uuids = self._select_tool_connections(agent_id, tool_name)
+            tool_info = servers[connection_uuids[0]].tools[tool_name]
+            tools.append(self._with_shadow_meta(tool_info, connection_uuids))
         return {
             "agent_id": agent_id,
             "tools": tools,
@@ -461,15 +494,9 @@ class ConnectionManager:
         """根据工具名称查找对应的连接UUID。
 
         同名工具可能存在于多个服务器；按 UUID 排序取首个以保证确定性，
-        并对歧义告警，便于排查错误路由。
+        与 tools/list 的去重顺序一致，并对歧义告警，便于排查错误路由。
         """
-        if agent_id not in self.mcp_server_connections:
-            return None
-        matches = sorted(
-            mcp_connection_uuid
-            for mcp_connection_uuid, mcp_conn in self.mcp_server_connections[agent_id].items()
-            if tool_name in mcp_conn.tools
-        )
+        matches = self._select_tool_connections(agent_id, tool_name)
         if len(matches) > 1:
             logger.warning(
                 f"工具名存在歧义，路由到 {matches[0]}: {agent_id}/{tool_name} -> {matches}"
@@ -503,6 +530,23 @@ class ConnectionManager:
                     "server_info": mcp_conn.server_info
                 }
 
+        # 同名工具冲突：同一 agent 下被多个服务器暴露的工具名
+        tool_conflicts = []
+        for agent_id, servers in self.mcp_server_connections.items():
+            tool_names = sorted(
+                {tool_name for mcp_conn in servers.values() for tool_name in mcp_conn.tools}
+            )
+            for tool_name in tool_names:
+                connection_uuids = self._select_tool_connections(agent_id, tool_name)
+                if len(connection_uuids) > 1:
+                    tool_conflicts.append(
+                        {
+                            "agent_id": agent_id,
+                            "tool": tool_name,
+                            "uuids": connection_uuids,
+                        }
+                    )
+
         return {
             "mcp_server_connections": total_mcp_connections,
             "robot_connections": len(self.robot_connections),
@@ -510,6 +554,7 @@ class ConnectionManager:
             "robot_connections_by_agent": agent_connection_counts,
             "mcp_servers": mcp_server_stats,
             "total_tools": total_tools,
+            "tool_conflicts": tool_conflicts,
         }
 
     def is_mcp_server_connected(self, agent_id: str, mcp_connection_uuid: str) -> bool:
