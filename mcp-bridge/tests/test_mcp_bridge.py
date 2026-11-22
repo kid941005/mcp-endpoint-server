@@ -486,5 +486,80 @@ class StopTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(calls), 1)
 
 
+class _FakeInboundWebSocket:
+    def __init__(self, payloads):
+        self._payloads = list(payloads)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if not self._payloads:
+            raise StopAsyncIteration
+        return self._payloads.pop(0)
+
+
+class _FakeWriteStream:
+    def __init__(self):
+        self.sent = []
+
+    async def send(self, item):
+        self.sent.append(item)
+
+
+class InboundRelayTests(unittest.IsolatedAsyncioTestCase):
+    """B3: a legal response with result=null must reach the MCP server."""
+
+    async def _relay(self, payloads):
+        stream = _FakeWriteStream()
+        await mcp_bridge.relay_ws_to_remote(
+            _FakeInboundWebSocket(payloads), stream, "test"
+        )
+        return stream
+
+    async def test_null_result_response_is_passed_through(self):
+        stream = await self._relay(['{"jsonrpc": "2.0", "id": 1, "result": null}'])
+        self.assertEqual(len(stream.sent), 1)
+        payload = json.loads(stream.sent[0].message.model_dump_json())
+        self.assertEqual(payload["jsonrpc"], "2.0")
+        self.assertEqual(payload["id"], 1)
+        self.assertIn("result", payload)
+        self.assertIsNone(payload["result"])
+        self.assertNotIn("error", payload)
+
+    async def test_valid_request_is_still_parsed_as_sdk_message(self):
+        stream = await self._relay(
+            ['{"jsonrpc": "2.0", "id": 2, "method": "tools/list"}']
+        )
+        self.assertEqual(len(stream.sent), 1)
+        self.assertIsInstance(stream.sent[0].message, mcp_bridge.JSONRPCMessage)
+        payload = json.loads(stream.sent[0].message.model_dump_json(by_alias=True))
+        self.assertEqual(payload["method"], "tools/list")
+
+    async def test_invalid_message_is_dropped(self):
+        stream = await self._relay([
+            '{"jsonrpc": "2.0", "id": 3}',
+            "not json",
+        ])
+        self.assertEqual(stream.sent, [])
+
+    def test_null_result_response_detection(self):
+        self.assertTrue(
+            mcp_bridge._is_null_result_response(
+                {"jsonrpc": "2.0", "id": 1, "result": None}
+            )
+        )
+        self.assertFalse(
+            mcp_bridge._is_null_result_response(
+                {"jsonrpc": "2.0", "id": 1, "result": {"ok": True}}
+            )
+        )
+        self.assertFalse(
+            mcp_bridge._is_null_result_response(
+                {"jsonrpc": "2.0", "id": 1, "error": None}
+            )
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

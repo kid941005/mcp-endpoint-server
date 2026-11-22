@@ -353,6 +353,40 @@ async def relay_remote_to_ws(read_stream: Any, websocket: Any, name: str) -> Non
         LOG.debug("[%s] remote -> ws: %s", name, payload[:800])
 
 
+class _RawJSONRPCMessage:
+    """Verbatim wrapper for a JSON-RPC message the pinned SDK cannot type.
+
+    JSONRPCResponse.result is declared as dict in the SDK we pin, so a legal
+    {"id": 1, "result": null} fails validation on the way in. All transports
+    serialize outbound messages with exclude_none=True, which would drop
+    result:null and produce an invalid response, so this wrapper returns the
+    parsed body exactly as received instead.
+    """
+
+    def __init__(self, data: dict[str, Any]) -> None:
+        self._data = data
+
+    def model_dump(self, **_kwargs: Any) -> dict[str, Any]:
+        return dict(self._data)
+
+    def model_dump_json(self, **_kwargs: Any) -> str:
+        return json.dumps(self._data, ensure_ascii=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"_RawJSONRPCMessage({self._data!r})"
+
+
+def _is_null_result_response(data: Any) -> bool:
+    """True for a well-formed JSON-RPC response whose result is null."""
+    if not isinstance(data, dict):
+        return False
+    if data.get("jsonrpc") != "2.0" or "method" in data:
+        return False
+    if "id" not in data or "error" in data:
+        return False
+    return "result" in data and data["result"] is None
+
+
 async def relay_ws_to_remote(websocket: Any, write_stream: Any, name: str) -> None:
     """Forward endpoint WebSocket JSON-RPC messages to the MCP server."""
     async for raw in websocket:
@@ -368,11 +402,19 @@ async def relay_ws_to_remote(websocket: Any, write_stream: Any, name: str) -> No
             LOG.warning("[%s] ignored non-JSON WebSocket message: %s", name, str(raw)[:200])
             continue
         try:
-            message = JSONRPCMessage.model_validate(data)
+            message: Any = JSONRPCMessage.model_validate(data)
         except Exception as exc:  # pydantic validation errors
-            LOG.warning("[%s] ignored invalid JSON-RPC message: %s", name, exc)
-            continue
-        await write_stream.send(SessionMessage(message=message))
+            if _is_null_result_response(data):
+                LOG.warning(
+                    "[%s] passing through response with result=null (SDK cannot type it): id=%s",
+                    name,
+                    data.get("id"),
+                )
+                message = _RawJSONRPCMessage(data)
+            else:
+                LOG.warning("[%s] ignored invalid JSON-RPC message: %s", name, exc)
+                continue
+        await write_stream.send(SessionMessage(message=message))  # type: ignore[arg-type]
         LOG.debug("[%s] ws -> remote: %s", name, str(raw)[:800])
 
 
