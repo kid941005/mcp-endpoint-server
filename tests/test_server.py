@@ -65,7 +65,7 @@ class HttpEndpointTests(unittest.TestCase):
 
     def test_stats_still_accepts_query_key_for_compat(self):
         body = self.client.get("/mcp_endpoint/stats", params={"key": self.key}).json()
-        self.assertEqual(body["result"]["status"], "success")
+        self.assertIn("mcp_server_connections", body["result"])
 
 
 class WebSocketAuthTests(unittest.TestCase):
