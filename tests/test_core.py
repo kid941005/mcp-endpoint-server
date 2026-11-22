@@ -64,6 +64,15 @@ class AggregateTests(unittest.TestCase):
         self.assertEqual([tool["name"] for tool in result["result"]["tools"]], ["x", "y"])
         self.assertEqual(set(result["result"]), {"tools"})
 
+    def test_multiple_non_tools_responses_keep_single_result(self):
+        pending = self._pending({
+            "a": {"jsonrpc": "2.0", "id": "uuid_n_1", "result": {"protocolVersion": "2024-11-05"}},
+            "b": {"jsonrpc": "2.0", "id": "uuid_n_1", "result": {"protocolVersion": "2025-03-26"}},
+        })
+        result = ConnectionManager().aggregate_responses(pending)
+        self.assertEqual(result["result"]["protocolVersion"], "2024-11-05")
+        self.assertNotIn("responses", result["result"])
+
     def test_empty_responses_return_internal_error(self):
         pending = self._pending({})
         result = ConnectionManager().aggregate_responses(pending)
@@ -83,6 +92,19 @@ class PendingLifecycleTests(unittest.IsolatedAsyncioTestCase):
         sent = manager.forward_to_robot_by_uuid.await_args.args[1]
         self.assertEqual(sent["id"], 1)
         self.assertEqual(sent["error"]["code"], -32002)
+
+    async def test_reregister_cancels_previous_timeout_task(self):
+        manager = ConnectionManager()
+        manager.pending_timeout = 0.05
+        manager.forward_to_robot_by_uuid = AsyncMock(return_value=True)
+        manager.register_pending_response("uuid_n_1", 1, "robot", ["mcp"])
+        first = manager.pending_responses["uuid_n_1"]
+        manager.register_pending_response("uuid_n_1", 2, "robot", ["mcp"])
+        await asyncio.sleep(0.01)
+        self.assertTrue(first.timeout_task.done())
+        self.assertEqual(manager.pending_responses["uuid_n_1"].request_id, 2)
+        manager.forward_to_robot_by_uuid.assert_not_awaited()
+        manager.remove_pending_response("uuid_n_1")
 
     async def test_discard_failed_connection_reduces_expected_set(self):
         manager = ConnectionManager()

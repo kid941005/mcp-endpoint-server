@@ -5,6 +5,8 @@ MCP Endpoint Server
 
 import hmac
 import json
+from typing import Optional
+
 import uvicorn
 from .utils.config import config
 from .utils.logger import get_logger
@@ -24,7 +26,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 logger = get_logger()
 
 
-async def validate_token_and_get_agent_id(websocket: WebSocket) -> str:
+async def validate_token_and_get_agent_id(websocket: WebSocket) -> Optional[str]:
     """
     验证token并获取agentId的公共方法
 
@@ -72,6 +74,8 @@ async def lifespan(app: FastAPI):
     logger.info("server.key 与加密 token 已隐藏，请从配置文件读取，请勿泄露。")
     yield
     # 关闭时
+    logger.info("MCP Endpoint Server 正在关闭，释放连接与待处理请求...")
+    await connection_manager.shutdown()
     logger.info("MCP Endpoint Server 已关闭")
 
 
@@ -120,12 +124,20 @@ async def root():
     return JSONRPCProtocol.to_dict(response)
 
 
-@app.get("/mcp_endpoint/health")
-async def health_check(key: str = None, agentid: str = None):
-    """健康检查"""
-    # 验证key参数（常量时间比较，避免时序侧信道）
+def _is_authorized_key(key: Optional[str]) -> bool:
+    """常量时间校验 server.key，避免时序侧信道。"""
     expected_key = config.get("server", "key", "")
-    if not key or not expected_key or not hmac.compare_digest(str(key), str(expected_key)):
+    return (
+        bool(key)
+        and bool(expected_key)
+        and hmac.compare_digest(str(key), str(expected_key))
+    )
+
+
+@app.get("/mcp_endpoint/health")
+async def health_check(key: Optional[str] = None, agentid: Optional[str] = None):
+    """健康检查"""
+    if not _is_authorized_key(key):
         response = JSONRPCProtocol.create_error_response(
             error_code=JSONRPCProtocol.AUTHENTICATION_ERROR,
             error_message="密钥验证失败",
@@ -146,10 +158,9 @@ async def health_check(key: str = None, agentid: str = None):
 
 
 @app.get("/mcp_endpoint/stats")
-async def stats(key: str = None):
+async def stats(key: Optional[str] = None):
     """连接与工具统计（需 server.key 授权）。"""
-    expected_key = config.get("server", "key", "")
-    if not key or not expected_key or not hmac.compare_digest(str(key), str(expected_key)):
+    if not _is_authorized_key(key):
         response = JSONRPCProtocol.create_error_response(
             error_code=JSONRPCProtocol.AUTHENTICATION_ERROR,
             error_message="密钥验证失败",
@@ -165,12 +176,11 @@ async def stats(key: str = None):
 @app.websocket("/mcp_endpoint/mcp/")
 async def websocket_tool_endpoint(websocket: WebSocket):
     """MCP服务器端WebSocket端点"""
-    await websocket.accept()
-
-    # 获取agentId参数
+    # 先鉴权再握手：未通过时 validate 内部直接 close，不建立可用连接。
     agent_id = await validate_token_and_get_agent_id(websocket)
     if not agent_id:
         return
+    await websocket.accept()
 
     mcp_connection_uuid = None
     try:
@@ -200,12 +210,11 @@ async def websocket_tool_endpoint(websocket: WebSocket):
 @app.websocket("/mcp_endpoint/call/")
 async def websocket_robot_endpoint(websocket: WebSocket):
     """小智端WebSocket端点"""
-    await websocket.accept()
-
-    # 获取agentId参数
+    # 先鉴权再握手：未通过时 validate 内部直接 close，不建立可用连接。
     agent_id = await validate_token_and_get_agent_id(websocket)
     if not agent_id:
         return
+    await websocket.accept()
 
     connection_uuid = None
     try:

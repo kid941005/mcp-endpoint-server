@@ -38,12 +38,13 @@ class MCPServerConnection:
 class PendingResponse:
     """待处理的响应信息"""
 
-    def __init__(self, transformed_request_id: str, request_id: Any, connection_uuid: str, expected_connections: List[str]):
+    def __init__(self, transformed_request_id: str, request_id: Any, connection_uuid: str, expected_connections: List[str], method: Optional[str] = None):
         self.transformed_request_id = transformed_request_id
         self.request_id = request_id
         self.connection_uuid = connection_uuid
         self.expected_connections = set(expected_connections)
         self.received_responses = {}
+        self.method = method
         self.timestamp = time.time()
         self.timeout_task: Optional[asyncio.Task] = None
 
@@ -56,8 +57,6 @@ class ConnectionManager:
         self.mcp_server_connections: Dict[str, Dict[str, MCPServerConnection]] = {}
         # 小智端连接: {connection_uuid: RobotConnection}
         self.robot_connections: Dict[str, RobotConnection] = {}
-        # 连接时间戳: {agentId: timestamp}
-        self.connection_timestamps: Dict[str, float] = {}
         # 待处理的响应: {transformed_request_id: PendingResponse}
         self.pending_responses: Dict[str, PendingResponse] = {}
         # 连接锁
@@ -77,7 +76,6 @@ class ConnectionManager:
             # 创建新的MCP服务器连接
             mcp_conn = MCPServerConnection(websocket, agent_id)
             self.mcp_server_connections[agent_id][mcp_conn.connection_uuid] = mcp_conn
-            self.connection_timestamps[agent_id] = time.time()
             logger.info(f"MCP服务器连接已注册: {agent_id} (UUID: {mcp_conn.connection_uuid})")
             return mcp_conn.connection_uuid
 
@@ -88,7 +86,6 @@ class ConnectionManager:
         async with self._lock:
             robot_conn = RobotConnection(websocket, agent_id)
             self.robot_connections[robot_conn.connection_uuid] = robot_conn
-            self.connection_timestamps[agent_id] = time.time()
             logger.info(
                 f"小智端连接已注册: {agent_id}, UUID: {robot_conn.connection_uuid}"
             )
@@ -259,10 +256,24 @@ class ConnectionManager:
             await self.unregister_robot_connection(connection_uuid)
             return False
 
-    def register_pending_response(self, transformed_request_id: str, request_id: Any, connection_uuid: str, expected_connections: List[str]):
-        """注册待处理的响应"""
+    def register_pending_response(
+        self,
+        transformed_request_id: str,
+        request_id: Any,
+        connection_uuid: str,
+        expected_connections: List[str],
+        method: Optional[str] = None,
+    ):
+        """注册待处理的响应。
+
+        同一 transformed_request_id 重复注册时先取消旧超时任务，避免旧任务
+        到期后取走新的 pending 并向机器人误报超时。
+        """
+        previous = self.pending_responses.get(transformed_request_id)
+        if previous is not None and previous.timeout_task and not previous.timeout_task.done():
+            previous.timeout_task.cancel()
         pending = PendingResponse(
-            transformed_request_id, request_id, connection_uuid, expected_connections
+            transformed_request_id, request_id, connection_uuid, expected_connections, method
         )
         self.pending_responses[transformed_request_id] = pending
         pending.timeout_task = asyncio.create_task(
@@ -373,7 +384,14 @@ class ConnectionManager:
             elif len(successful) == 1:
                 aggregated = successful[0]
             else:
-                aggregated = {"responses": successful}
+                # initialize/ping 等无合并语义的方法必须返回单个合法 result，
+                # 不能包装成 {"responses": [...]} 破坏 MCP 协议结构。
+                logger.warning(
+                    f"多个工具端返回无合并语义的响应，取首个: "
+                    f"{pending.transformed_request_id} (method={pending.method}, "
+                    f"count={len(successful)})"
+                )
+                aggregated = successful[0]
 
             logger.debug(f"聚合响应完成: {len(successful)} 个成功响应")
             return {"jsonrpc": "2.0", "id": response_id, "result": aggregated}
@@ -391,11 +409,21 @@ class ConnectionManager:
             }
 
     def update_tool_list(self, agent_id: str, mcp_connection_uuid: str, tools: List[Dict[str, Any]]):
-        """更新工具列表"""
+        """更新工具列表；跨服务器同名工具会告警（调用路由存在歧义）。"""
         if agent_id in self.mcp_server_connections and mcp_connection_uuid in self.mcp_server_connections[agent_id]:
             mcp_conn = self.mcp_server_connections[agent_id][mcp_connection_uuid]
             mcp_conn.tools = {tool["name"]: tool for tool in tools}
             logger.debug(f"已更新工具列表: {agent_id} (UUID: {mcp_connection_uuid}), 工具数量: {len(tools)}")
+            for other_uuid, other_conn in self.mcp_server_connections[agent_id].items():
+                if other_uuid == mcp_connection_uuid:
+                    continue
+                duplicated = set(mcp_conn.tools) & set(other_conn.tools)
+                if duplicated:
+                    logger.warning(
+                        f"检测到跨服务器同名工具: {agent_id} "
+                        f"{mcp_connection_uuid} 与 {other_uuid}: {sorted(duplicated)}；"
+                        "tools/call 将路由到 UUID 较小的连接"
+                    )
 
     def update_server_info(self, agent_id: str, mcp_connection_uuid: str, server_info: Dict[str, Any]):
         """更新服务器信息"""
@@ -430,12 +458,23 @@ class ConnectionManager:
         }
 
     def find_tool_connection(self, agent_id: str, tool_name: str) -> Optional[str]:
-        """根据工具名称查找对应的连接UUID"""
-        if agent_id in self.mcp_server_connections:
-            for mcp_connection_uuid, mcp_conn in self.mcp_server_connections[agent_id].items():
-                if tool_name in mcp_conn.tools:
-                    return mcp_connection_uuid
-        return None
+        """根据工具名称查找对应的连接UUID。
+
+        同名工具可能存在于多个服务器；按 UUID 排序取首个以保证确定性，
+        并对歧义告警，便于排查错误路由。
+        """
+        if agent_id not in self.mcp_server_connections:
+            return None
+        matches = sorted(
+            mcp_connection_uuid
+            for mcp_connection_uuid, mcp_conn in self.mcp_server_connections[agent_id].items()
+            if tool_name in mcp_conn.tools
+        )
+        if len(matches) > 1:
+            logger.warning(
+                f"工具名存在歧义，路由到 {matches[0]}: {agent_id}/{tool_name} -> {matches}"
+            )
+        return matches[0] if matches else None
 
     def get_connection_stats(self) -> Dict[str, Any]:
         """获取连接统计信息"""
@@ -501,6 +540,29 @@ class ConnectionManager:
         if agent_id in self.mcp_server_connections:
             return list(self.mcp_server_connections[agent_id].keys())
         return []
+
+
+    async def shutdown(self) -> None:
+        """优雅停机：取消待处理超时任务并关闭所有 WebSocket。"""
+        for pending in list(self.pending_responses.values()):
+            if pending.timeout_task and not pending.timeout_task.done():
+                pending.timeout_task.cancel()
+        self.pending_responses.clear()
+
+        mcp_websockets = [
+            conn.websocket
+            for servers in self.mcp_server_connections.values()
+            for conn in servers.values()
+        ]
+        robot_websockets = [conn.websocket for conn in self.robot_connections.values()]
+        self.mcp_server_connections.clear()
+        self.robot_connections.clear()
+
+        for websocket in mcp_websockets + robot_websockets:
+            try:
+                await websocket.close(code=1001)
+            except Exception as e:
+                logger.debug(f"关闭连接时忽略异常: {e}")
 
 
 # 全局连接管理器实例

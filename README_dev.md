@@ -11,20 +11,28 @@ mcp-endpoint-server/
 │   ├── handlers/             # 处理器
 │   │   └── websocket_handler.py
 │   ├── utils/                # 工具模块
-│   │   ├── config.py
-│   │   └── logger.py
+│   │   ├── __init__.py       # 版本号
+│   │   ├── aes_utils.py      # AES 加解密
+│   │   ├── config.py         # 配置管理
+│   │   ├── jsonrpc.py        # JSON-RPC 协议
+│   │   ├── logger.py         # 日志管理
+│   │   └── util.py           # 网络工具
 │   └── server.py             # 主服务器
-├── data/                     # 配置文件目录
+├── mcp-bridge/               # stdio/SSE/HTTP 到 WebSocket 的桥
+├── tests/                    # 单元与端到端测试
+├── data/                     # 运行时配置目录
 ├── logs/                     # 日志目录
 ├── main.py                   # 主入口
 ├── requirements.txt          # 依赖文件
+├── requirements-dev.txt      # 测试依赖
+├── Dockerfile
 └── README.md                 # 说明文档
 ```
 ## 安装依赖
 
 ```bash
 conda remove -n mcp-endpoint-server --all -y
-conda create -n mcp-endpoint-server python=3.10 -y
+conda create -n mcp-endpoint-server python=3.12 -y
 conda activate mcp-endpoint-server
 
 pip install -r requirements.txt

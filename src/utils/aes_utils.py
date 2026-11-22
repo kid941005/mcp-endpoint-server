@@ -1,4 +1,7 @@
 import base64
+import binascii
+from typing import Optional
+
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
 import hashlib
@@ -59,7 +62,7 @@ def encrypt(key: str, plain_text: str) -> str:
         raise RuntimeError(f"加密过程中发生未知错误: {str(e)}")
 
 
-def decrypt(key: str, encrypted_text: str) -> str:
+def decrypt(key: str, encrypted_text: str) -> Optional[str]:
     """
     AES解密
     @param key: 密钥（16位、24位或32位）
@@ -74,19 +77,19 @@ def decrypt(key: str, encrypted_text: str) -> str:
         # 解码Base64
         try:
             encrypted_bytes = base64.b64decode(encrypted_text)
-        except Exception as e:
+        except (binascii.Error, ValueError):
             return None
 
         # 解密
         try:
             decrypted_bytes = cipher.decrypt(encrypted_bytes)
-        except Exception as e:
+        except ValueError:
             return None
 
         # 去除PKCS7填充
         try:
             unpadded_data = unpad(decrypted_bytes, AES.block_size)
-        except Exception as e:
+        except ValueError:
             return None
 
         return unpadded_data.decode("utf-8")

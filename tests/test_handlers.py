@@ -46,6 +46,23 @@ class RobotHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("missing", sent["error"]["message"])
 
 
+    async def test_notification_without_id_gets_no_reply_when_no_mcp(self):
+        handler = handler_module.WebSocketHandler()
+        with patch.object(
+            handler_module.connection_manager, "get_agent_mcp_connections", return_value=[]
+        ), patch.object(
+            handler_module.connection_manager,
+            "forward_to_robot_by_uuid",
+            AsyncMock(return_value=True),
+        ) as forward:
+            await handler._handle_robot_message(
+                "agent",
+                json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+                "robot",
+            )
+        forward.assert_not_awaited()
+
+
 class ServerMessageHandlerTests(unittest.IsolatedAsyncioTestCase):
     async def test_invalid_server_json_is_ignored(self):
         handler = handler_module.WebSocketHandler()
