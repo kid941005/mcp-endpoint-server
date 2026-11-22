@@ -90,7 +90,7 @@
 | `docker publish` | push main（镜像构建同时验证 `HEALTHCHECK` 语法） | ✅ success（10:01:55Z 完成） | [45010332608](https://github.com/kid941005/mcp-endpoint-server/actions/runs/45010332608) |
 | `core tests` / `Docker Image CI` | 未触发：本次只改 `mcp-bridge/**`；tag 条件未满足 | — | — |
 
-此前 B 系列各提交的 CI（均 ✅）：`140d279` run 45006954669 / 45006954674，`cc144e00` run 45007976904 / 45007976865，`40a4f56` run 45009512285 / 45009512312，`55f2b19` run 45009751856 / 45009751828；compose 增强 `fbe2b5e` run 45011333703（mcp-bridge tests）/ 45011333655（docker publish）均 ✅。
+此前 B 系列各提交的 CI（均 ✅）：`140d279` run 45006954669 / 45006954674，`cc144e00` run 45007976904 / 45007976865，`40a4f56` run 45009512285 / 45009512312，`55f2b19` run 45009751856 / 45009751828；compose 增强 `fbe2b5e` run 45011333703（mcp-bridge tests）/ 45011333655（docker publish）均 ✅；autoheal `4af9d10` run 45011715054（mcp-bridge tests）/ 45011715087（docker publish）均 ✅。
 
 ## 一、结构与分层
 
