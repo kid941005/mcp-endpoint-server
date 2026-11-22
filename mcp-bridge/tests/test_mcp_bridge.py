@@ -348,5 +348,32 @@ class HttpTransportIntegrationTests(unittest.IsolatedAsyncioTestCase):
         await self._run_case("streamable-http", "/mcp")
 
 
+class WirePayloadTests(unittest.TestCase):
+    """_dump_message must keep a null result but drop null id/error."""
+
+    def _dump(self, raw):
+        message = mcp_bridge.JSONRPCMessage.model_validate(raw)
+        return json.loads(mcp_bridge._dump_message(message))
+
+    def test_null_result_is_preserved(self):
+        payload = self._dump({"jsonrpc": "2.0", "id": 1, "result": None})
+        self.assertIn("result", payload)
+        self.assertIsNone(payload["result"])
+        self.assertNotIn("error", payload)
+        self.assertEqual(payload["id"], 1)
+
+    def test_notification_drops_null_id_and_error(self):
+        payload = self._dump({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        self.assertNotIn("id", payload)
+        self.assertNotIn("error", payload)
+        self.assertEqual(payload["method"], "notifications/initialized")
+
+    def test_error_response_keeps_error_and_drops_null_result(self):
+        payload = self._dump(
+            {"jsonrpc": "2.0", "id": 2, "error": {"code": -32601, "message": "nope"}}
+        )
+        self.assertEqual(payload["error"]["code"], -32601)
+        self.assertNotIn("result", payload)
+
 if __name__ == "__main__":
     unittest.main()

@@ -321,12 +321,27 @@ def _make_httpx_client_factory(cfg: BridgeConfig):
     return factory
 
 
+def _dump_message(message: Any) -> str:
+    """Serialize an MCP message to JSON-RPC wire text.
+
+    Only null-valued id / error fields are dropped (a notification has no id,
+    and a success response must not carry a null error).  result is kept even
+    when it is null: {"jsonrpc":"2.0","id":1,"result":null} is a valid response,
+    and stripping it would leave a message with neither result nor error.
+    """
+    data = json.loads(message.model_dump_json(by_alias=True))
+    for key in ("id", "error"):
+        if data.get(key) is None:
+            data.pop(key, None)
+    return json.dumps(data, ensure_ascii=False)
+
+
 async def relay_remote_to_ws(read_stream: Any, websocket: Any, name: str) -> None:
     """Forward MCP server messages to the endpoint WebSocket."""
     async for item in read_stream:
         if isinstance(item, Exception):
             raise item
-        payload = item.message.model_dump_json(by_alias=True, exclude_none=True)
+        payload = _dump_message(item.message)
         await websocket.send(payload)
         LOG.debug("[%s] remote -> ws: %s", name, payload[:800])
 
@@ -377,7 +392,7 @@ async def run_once(cfg: BridgeConfig) -> None:
                 ),
             ]
             try:
-                done, pending = await asyncio.wait(
+                done, _ = await asyncio.wait(
                     tasks, return_when=asyncio.FIRST_COMPLETED
                 )
             finally:

@@ -44,7 +44,13 @@ class LoggerManager:
         self._setup_logger()
 
     def _setup_logger(self):
-        """设置日志器"""
+        """设置日志器
+
+        注意：本方法在模块导入时执行（全局 LoggerManager 实例化）。为保证
+        import 阶段不产生磁盘副作用（不创建 data/*.cfg、不生成 server.key），
+        这里只用 ConfigManager.peek* 只读读取现有配置；真正加载配置推迟到
+        lifespan / 首个请求。
+        """
         # 移除默认的处理器
         logger.remove()
 
@@ -61,7 +67,7 @@ class LoggerManager:
         logger.add(
             sys.stdout,
             format=custom_format,
-            level=config.get("server", "log_level", "INFO"),
+            level=config.peek("server", "log_level", "INFO"),
             colorize=True,
             backtrace=True,
             diagnose=True,
@@ -70,7 +76,7 @@ class LoggerManager:
         )
 
         # 文件处理器（不带颜色）
-        log_file = config.get("logging", "log_file", "logs/mcp_server.log")
+        log_file = config.peek("logging", "log_file", "logs/mcp_server.log")
         if log_file:
             # 确保日志目录存在；纯文件名时 dirname 为空，不能直接 makedirs。
             log_dir = os.path.dirname(log_file)
@@ -81,16 +87,16 @@ class LoggerManager:
             file_format = f"{{time:YYYY-MM-DD HH:mm:ss}} [{VERSION}][{{name}}] {{level}} - {{message}}"
 
             # 获取文件大小限制
-            max_file_size = config.get("logging", "max_file_size", "10MB")
+            max_file_size = config.peek("logging", "max_file_size", "10MB")
             max_bytes = self._parse_size(max_file_size)
 
             # 获取备份数量
-            backup_count = config.getint("logging", "backup_count", 5)
+            backup_count = config.peekint("logging", "backup_count", 5)
 
             logger.add(
                 log_file,
                 format=file_format,
-                level=config.get("server", "log_level", "INFO"),
+                level=config.peek("server", "log_level", "INFO"),
                 rotation=max_bytes,
                 retention=backup_count,
                 compression="zip",

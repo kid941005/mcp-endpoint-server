@@ -18,9 +18,6 @@ logger = get_logger()
 class WebSocketHandler:
     """WebSocket处理器"""
 
-    def __init__(self):
-        pass
-
     async def _reply_error(
         self,
         connection_uuid: str,
@@ -74,8 +71,48 @@ class WebSocketHandler:
                     logger.debug("---------所有期望服务器已响应，开始聚合---------")
                     await self._forward_aggregated_response(pending, transformed_id)
 
+            if self._is_server_initiated_message(message_data):
+                logger.debug(
+                    f"收到服务器主动消息: {agent_id} (UUID: {mcp_connection_uuid}) - "
+                    f"{message_data.get('method')}"
+                )
+                await self._forward_to_robot_agents(
+                    agent_id, mcp_connection_uuid, message_data
+                )
+
         except Exception as e:
             logger.exception(f"处理MCP服务器消息时发生错误: {e}")
+
+    def _is_server_initiated_message(self, message_data: dict) -> bool:
+        """判断是否为 MCP 服务器主动发起的请求/通知（而非对客户端请求的响应）。
+
+        服务器可以主动请求客户端能力（sampling/createMessage、roots/list、
+        elicitation/create）或推送通知（notifications/tools/list_changed、
+        notifications/message）。它们没有登记在 pending_responses 中，若不转发
+        给小智端，请求永远得不到响应，工具列表热更新也会失效。
+        """
+        if "method" not in message_data:
+            return False
+        message_id = message_data.get("id")
+        if message_id is None:
+            return True
+        return message_id not in connection_manager.pending_responses
+
+    async def _forward_to_robot_agents(
+        self, agent_id: str, mcp_connection_uuid: str, message_data: dict
+    ) -> None:
+        """把 MCP 服务器主动消息原样转发给该 agent 的所有小智端连接。"""
+        robot_connections = connection_manager.get_robot_connections_by_agent(agent_id)
+        if not robot_connections:
+            logger.debug(
+                f"agent {agent_id} 无已连接小智端，服务器主动消息被丢弃: "
+                f"{message_data.get('method')} (来源 MCP UUID: {mcp_connection_uuid})"
+            )
+            return
+        for robot_conn in robot_connections:
+            await connection_manager.forward_to_robot_by_uuid(
+                robot_conn.connection_uuid, message_data
+            )
 
     def _is_tools_list_response(self, message_data: dict) -> bool:
         """检查是否为工具列表响应"""

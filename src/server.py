@@ -92,10 +92,11 @@ app = FastAPI(
 )
 
 # 配置CORS
-if config.getboolean("security", "enable_cors", True):
-    raw_origins = config.get("security", "allowed_origins", "*") or "*"
+# 使用只读的 peek* ：模块导入阶段不创建/改写配置文件，首次真正加载推迟到 lifespan。
+if config.peekboolean("security", "enable_cors", True):
+    raw_origins = config.peek("security", "allowed_origins", "*") or "*"
     allowed_origins = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
-    allow_credentials = config.getboolean("security", "allow_credentials", False)
+    allow_credentials = config.peekboolean("security", "allow_credentials", False)
     if "*" in allowed_origins and allow_credentials:
         # 浏览器规范禁止 Access-Control-Allow-Origin: * 与凭据同时使用。
         logger.warning("allowed_origins 为 * 时已禁用 allow_credentials")

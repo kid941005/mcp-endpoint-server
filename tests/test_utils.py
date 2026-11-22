@@ -73,6 +73,30 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(manager.get("server", "key"), key)
 
 
+class ConfigPeekTests(unittest.TestCase):
+    """peek* 只读读取：不得创建/改写配置文件，供 import 期使用。"""
+
+    def test_peek_does_not_create_config_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "nested", "server.cfg")
+            manager = ConfigManager(path)
+            # 根目录 mcp-endpoint-server.cfg 存在，peek 应读它且不落盘。
+            self.assertEqual(manager.peek("server", "log_level", "INFO"), "INFO")
+            self.assertFalse(os.path.exists(os.path.dirname(path)))
+
+    def test_peek_falls_back_to_default_without_any_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manager = ConfigManager(os.path.join(tmp, "none.cfg"))
+            cwd = os.getcwd()
+            os.chdir(tmp)
+            try:
+                self.assertEqual(manager.peek("server", "log_level", "DEBUG"), "DEBUG")
+                self.assertTrue(manager.peekboolean("security", "enable_cors", True))
+                self.assertEqual(manager.peekint("logging", "backup_count", 7), 7)
+            finally:
+                os.chdir(cwd)
+            self.assertEqual(os.listdir(tmp), [])
+
 class NetworkUtilTests(unittest.TestCase):
     def test_get_local_ip_returns_string(self):
         value = get_local_ip()

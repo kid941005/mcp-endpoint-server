@@ -1,6 +1,7 @@
 """WebSocket handler behavior tests."""
 import json
 import unittest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from src.handlers import websocket_handler as handler_module
@@ -71,6 +72,81 @@ class ServerMessageHandlerTests(unittest.IsolatedAsyncioTestCase):
     async def test_non_object_server_json_is_ignored(self):
         handler = handler_module.WebSocketHandler()
         await handler._handle_mcp_server_message("agent", "uuid", json.dumps([1, 2]))
+
+    async def test_server_request_is_forwarded_to_robot(self):
+        """服务器主动请求（sampling/createMessage）应转发给小智端。"""
+        handler = handler_module.WebSocketHandler()
+        robot = SimpleNamespace(connection_uuid="robot-1", agent_id="agent")
+        message = {
+            "jsonrpc": "2.0",
+            "id": 99,
+            "method": "sampling/createMessage",
+            "params": {"maxTokens": 16},
+        }
+        with patch.object(
+            handler_module.connection_manager,
+            "get_robot_connections_by_agent",
+            return_value=[robot],
+        ), patch.object(
+            handler_module.connection_manager,
+            "forward_to_robot_by_uuid",
+            AsyncMock(return_value=True),
+        ) as forward:
+            await handler._handle_mcp_server_message("agent", "uuid-1", json.dumps(message))
+        forward.assert_awaited_once()
+        self.assertEqual(forward.await_args.args[0], "robot-1")
+        self.assertEqual(forward.await_args.args[1], message)
+
+    async def test_server_notification_is_forwarded_to_robot(self):
+        """notifications/tools/list_changed 转发给小智端，触发工具列表热更新。"""
+        handler = handler_module.WebSocketHandler()
+        robot = SimpleNamespace(connection_uuid="robot-2", agent_id="agent")
+        message = {"jsonrpc": "2.0", "method": "notifications/tools/list_changed"}
+        with patch.object(
+            handler_module.connection_manager,
+            "get_robot_connections_by_agent",
+            return_value=[robot],
+        ), patch.object(
+            handler_module.connection_manager,
+            "forward_to_robot_by_uuid",
+            AsyncMock(return_value=True),
+        ) as forward:
+            await handler._handle_mcp_server_message("agent", "uuid-2", json.dumps(message))
+        forward.assert_awaited_once()
+        self.assertEqual(forward.await_args.args[1], message)
+
+    async def test_response_with_unknown_id_is_not_forwarded(self):
+        """未知 id 的响应不是通知，不应转发给小智端。"""
+        handler = handler_module.WebSocketHandler()
+        robot = SimpleNamespace(connection_uuid="robot-3", agent_id="agent")
+        message = {"jsonrpc": "2.0", "id": 1001, "result": {"ok": True}}
+        with patch.object(
+            handler_module.connection_manager,
+            "get_robot_connections_by_agent",
+            return_value=[robot],
+        ), patch.object(
+            handler_module.connection_manager,
+            "forward_to_robot_by_uuid",
+            AsyncMock(return_value=True),
+        ) as forward:
+            await handler._handle_mcp_server_message("agent", "uuid-3", json.dumps(message))
+        forward.assert_not_awaited()
+
+    async def test_server_message_is_dropped_when_no_robot(self):
+        """没有小智端连接时不报错，仅丢弃。"""
+        handler = handler_module.WebSocketHandler()
+        message = {"jsonrpc": "2.0", "method": "notifications/message", "params": {}}
+        with patch.object(
+            handler_module.connection_manager,
+            "get_robot_connections_by_agent",
+            return_value=[],
+        ), patch.object(
+            handler_module.connection_manager,
+            "forward_to_robot_by_uuid",
+            AsyncMock(return_value=True),
+        ) as forward:
+            await handler._handle_mcp_server_message("agent", "uuid-4", json.dumps(message))
+        forward.assert_not_awaited()
 
 
 if __name__ == "__main__":

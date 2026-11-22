@@ -109,6 +109,50 @@ class ConfigManager:
         with open(self.config_file, "w", encoding="utf-8") as f:
             self.config.write(f)
 
+    def _peek_parser(self) -> Optional[configparser.ConfigParser]:
+        """只读解析已存在的配置文件（不创建目录/文件、不生成 server.key）。
+
+        用于 import 期（日志初始化、CORS 配置）读取配置，避免导入模块时
+        产生磁盘副作用。优先使用 config_file，其次根目录的默认配置。
+        """
+        for candidate in (self.config_file, "mcp-endpoint-server.cfg"):
+            if not os.path.exists(candidate):
+                continue
+            parser = configparser.ConfigParser()
+            try:
+                parser.read(candidate, encoding="utf-8")
+            except (configparser.Error, OSError):
+                continue
+            return parser
+        return None
+
+    def peek(self, section: str, key: str, default: Optional[str] = None) -> Optional[str]:
+        """只读查看配置值，绝不落盘（不创建配置文件、不生成密钥）。"""
+        parser = self._peek_parser()
+        if parser is None:
+            return default
+        try:
+            return parser.get(section, key, fallback=default)
+        except (configparser.Error, ValueError):
+            return default
+
+    def peekint(self, section: str, key: str, default: int = 0) -> int:
+        """只读查看整数配置值，绝不落盘。"""
+        raw = self.peek(section, key, None)
+        if raw is None:
+            return default
+        try:
+            return int(str(raw).strip())
+        except (TypeError, ValueError):
+            return default
+
+    def peekboolean(self, section: str, key: str, default: bool = False) -> bool:
+        """只读查看布尔配置值，绝不落盘。"""
+        raw = self.peek(section, key, None)
+        if raw is None:
+            return default
+        return str(raw).strip().lower() in ("1", "yes", "true", "on")
+
     def get(self, section: str, key: str, default: Optional[str] = None) -> str:
         """获取配置值"""
         self._ensure_loaded()
