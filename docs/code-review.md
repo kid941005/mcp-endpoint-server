@@ -90,7 +90,7 @@
 | `docker publish` | push main（镜像构建同时验证 `HEALTHCHECK` 语法） | ✅ success（10:01:55Z 完成） | [45010332608](https://github.com/kid941005/mcp-endpoint-server/actions/runs/45010332608) |
 | `core tests` / `Docker Image CI` | 未触发：本次只改 `mcp-bridge/**`；tag 条件未满足 | — | — |
 
-此前 B 系列各提交的 CI（均 ✅）：`140d279` run 45006954669 / 45006954674，`cc144e00` run 45007976904 / 45007976865，`40a4f56` run 45009512285 / 45009512312，`55f2b19` run 45009751856 / 45009751828。
+此前 B 系列各提交的 CI（均 ✅）：`140d279` run 45006954669 / 45006954674，`cc144e00` run 45007976904 / 45007976865，`40a4f56` run 45009512285 / 45009512312，`55f2b19` run 45009751856 / 45009751828；compose 增强 `fbe2b5e` run 45011333703（mcp-bridge tests）/ 45011333655（docker publish）均 ✅。
 
 ## 一、结构与分层
 
@@ -243,9 +243,9 @@
 | L7 | `aes_utils.py:77-97`；`websocket_handler.py:333-343`；`server.py` WS 循环 | 宽泛 `except Exception` 吞异常，排障困难；循环内 `break` 静默断开 | 捕获具体异常并 `exc_info=True`；非连接类异常记录后继续 | ✅ 已修（`7077bab`）：四处 `logger.error` → `logger.exception`（WS 循环、tools/list 响应、initialize 响应、错误回包失败），断连仍保留 `break` 并注明原因；AES 异常已收窄；纯顶层兜底保留 |
 | L8 | `src/server.py:168-171`、`203-206` | 未鉴权连接先完成 WS 握手再 `close(1008)` | 先校验 token，失败直接 `close` 不 accept；或限制握手超时 | ✅ 已修：先 validate 再 accept（`server.py:180/214`） |
 
-## 五、已实施修改（`4dca5650` + `e36ef14` + `fd1d22d` + `d6ae8e5` + `7077bab` + `8718b78` + `d846699` + `2aed70f`，2026-11-22）
+## 五、已实施修改（`4dca5650` + `e36ef14` + `fd1d22d` + `d6ae8e5` + `7077bab` + `8718b78` + `d846699` + `2aed70f` + `fbe2b5e`，2026-11-22）
 
-提交范围：`4dca5650` 7 files / +241 −101；`e36ef14` 2 files（同名工具去重）；`604a6881` + `fd1d22d` 3 files（`src/server.py`、`tests/test_server.py`、`README.md`，header 鉴权 + 测试修正）；`d6ae8e5` 3 files（`src/core/connection_manager.py`、`tests/test_core.py`、`tests/test_integration.py`，聚合路径去重 + 双工具端 e2e）；`7077bab` 7 files（`src/utils/{util,logger,config,jsonrpc}.py`、`src/server.py`、`src/handlers/websocket_handler.py`、`tests/test_utils.py`，L2–L5/L7 收尾）。
+提交范围：`4dca5650` 7 files / +241 −101；`e36ef14` 2 files（同名工具去重）；`604a6881` + `fd1d22d` 3 files（`src/server.py`、`tests/test_server.py`、`README.md`，header 鉴权 + 测试修正）；`d6ae8e5` 3 files（`src/core/connection_manager.py`、`tests/test_core.py`、`tests/test_integration.py`，聚合路径去重 + 双工具端 e2e）；`7077bab` 7 files（`src/utils/{util,logger,config,jsonrpc}.py`、`src/server.py`、`src/handlers/websocket_handler.py`、`tests/test_utils.py`，L2–L5/L7 收尾）；`2aed70f` 8 files（bridge 轻微项收尾 + 新增 `mcp-bridge/healthcheck.py`）；`fbe2b5e` 1 file（`mcp-bridge/docker-compose.example.yml`，`env_file` 改 `path/required: false` 并补镜像健康检查说明）。
 
 1. `src/core/connection_manager.py`
    - `PendingResponse.__init__(..., method: Optional[str] = None)` 新增 `method`；`register_pending_response(..., method=None)` 覆盖前 `previous.timeout_task.cancel()`（M5）
