@@ -1,5 +1,6 @@
 """Utility tests for JSON-RPC, AES, config, and network helpers."""
 import os
+import base64
 import tempfile
 import unittest
 
@@ -44,6 +45,20 @@ class AESTests(unittest.TestCase):
         self.assertEqual(len(pad_key("a" * 24)), 24)
         self.assertEqual(len(pad_key("a" * 32)), 32)
         self.assertEqual(len(pad_key("short")), 32)
+
+    def test_ecb_is_deterministic_and_block_aligned(self):
+        """协议兼容性：同 key/明文必须得到相同密文，且密文按 16 字节块对齐。"""
+        key = "0123456789abcdef0123456789abcdef"
+        plain = '{"agentId":"agent-1"}'
+        first = encrypt(key, plain)
+        self.assertEqual(first, encrypt(key, plain))
+        self.assertEqual(len(base64.b64decode(first)) % 16, 0)
+        self.assertNotEqual(first, encrypt("f" * 32, plain))
+
+    def test_decrypt_with_wrong_key_does_not_return_plaintext(self):
+        key = "0123456789abcdef0123456789abcdef"
+        plain = '{"a":1}'
+        self.assertNotEqual(decrypt("f" * 32, encrypt(key, plain)), plain)
 
 
 class ConfigTests(unittest.TestCase):
