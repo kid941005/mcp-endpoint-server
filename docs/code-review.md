@@ -522,3 +522,29 @@
 ### 验证
 - 本地：13 个改动文件 `ast` 语法校验全通过；ruff（`src` + `mcp-bridge/mcp_bridge.py` + `healthcheck.py`）All checks passed；root `Ran 75 tests`，`failures=0`、`errors=5`（均为沙箱在 `%TEMP%` 的 `mkdtemp` 目录内 `CreateFile`/`makedirs` 被拒，4 个既有 + 1 个新增同类用例，属环境限制）；bridge `Ran 42 tests`，`errors=3`（真实子进程 e2e 的 `WinError 5`，环境限制），4 个新增 config 用例全过；配置懒加载重试另在真实目录单独验证通过。
 - CI（提交 `3ea7483`）：`core tests` run `45178239587` ✅（Python 3.11 job `137704987975` / 3.12 job `137704987525`）、`mcp-bridge tests` run `45178239582` ✅（3.11 job `137704987828` / 3.12 job `137704988170`）、`docker publish` run `45178239918` ✅（test 3.12 job `137704988851` / 3.11 job `137704989245` / build and push job `137705140824`）。
+
+## 十三、落实审核遗留项并发布 v0.0.8（2026-11-23，落地 `fab10f3`）
+
+本轮把第十二节列为「建议中」的工程化欠账逐项落地，并统一升版本发布。
+
+### 已落实
+
+| 类别 | 改动 |
+|---|---|
+| CI 覆盖 | `core-tests.yml` / `docker-publish.yml` 的 `paths` 与 `cache-dependency-path` 补上 `Dockerfile`、`docker-compose.yml`、`.dockerignore`、`requirements.lock`，改 Docker/依赖也会触发测试并刷新缓存 |
+| CI 健壮性 | `docker-publish.yml` 增加 `permissions: contents: read`、test 15 分钟 / build 40 分钟超时、matrix `fail-fast: false`；`docker-image.yml` 权限收窄为 `contents: read + packages: write`，删除无意义的磁盘清理步骤，改 `docker/metadata-action@v6` 生成 semver 标签（预发布不再打 `latest`），并加 `concurrency` 与 40 分钟超时 |
+| bridge CI | `mcp-bridge-tests.yml` 新增 `docker build` 作业（只构建不推送）覆盖此前从不构建的 bridge 镜像；测试改为 `coverage run` 并新增 `mcp-bridge/.coveragerc`（`fail_under = 80`，实测覆盖率 83%） |
+| 依赖锁定 | 新增跨平台 universal lock：`requirements.lock`（60 行）、`mcp-bridge/requirements.lock`（96 行），精确版本 + 平台标记（`pywin32` 仅 `sys_platform == 'win32'`，`uvloop` 仅非 Windows）；两个 Dockerfile 改为 `pip install -r requirements.lock`，镜像可复现 |
+| 镜像 | 根 `Dockerfile` 增加 `HEALTHCHECK`（urllib 探测 `/mcp_endpoint/`，30s/5s/15s/3 次）；`docker-compose.yml` 增加 `init: true`；`.dockerignore` 排除 `docs/` 与开发辅助文件；`.gitignore` 显式忽略 `logs/` |
+| 版本 | `src/utils/__init__.py` 与 `mcp-bridge/mcp_bridge.py` 版本 `0.0.7 -> 0.0.8`；README 说明两个镜像工作流与 latest 规则；README_dev 标注 `data/`、`logs/` 为运行时生成 |
+| 测试强度 | `tests/test_handlers.py` 两个原本无断言的用例改为断言返回值且 pending 不变；`tests/test_utils.py` 运行时版本断言新增「不得为 unknown」；修正测试内 ruff（C408/B905/B904/F401） |
+
+### 验证
+- 本地（danger-full-access，无沙箱限制）：root `Ran 75 tests ... OK`；bridge `Ran 42 tests ... OK`；`ruff check src tests mcp-bridge` All checks passed；本机 `docker build` 根镜像与 bridge 镜像均成功（验证 lock 可安装、HEALTHCHECK 语法有效）。
+- CI（提交 `fab10f3`）：`core tests` run `45182384635` ✅、`mcp-bridge tests` run `45182384774` ✅（含新增 docker build 作业与覆盖率门槛）、`docker publish` run `45182384629` ✅（Linux 镜像内按 lock 安装成功）。
+- 发布：tag `v0.0.8`，`docker-publish`（Docker Hub）与 `Docker Image CI`（ghcr.io）按 `v*` 标签各自构建推送。
+
+### 仍未采纳（保留为后续）
+- 基础镜像 `python:3.12-slim` 未固定 `@sha256` 摘要（需按目标架构取 digest，避免与多平台构建耦合后再定）。
+- `docker-publish.yml` 的镜像命名空间仍取 `secrets.DOCKERHUB_USERNAME`，`workflow_dispatch`/fork 无该 secret 时会失败（需要时可加固定默认值）。
+- `tests/test_forwarding_lock.py` 用 ast/exec 抽取方法体的实现耦合、`test_integration._recv` 每次新建线程池、以及两组重复的「同名工具仲裁」用例，属测试重构，未在本轮触碰。
