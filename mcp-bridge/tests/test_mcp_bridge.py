@@ -684,5 +684,40 @@ class TestDoubleGuardTests(unittest.TestCase):
         self.assertEqual(fake_fastmcp_server.main(["stdio", "not-a-port"]), 2)
 
 
+class VersionLoggingTests(unittest.TestCase):
+    def test_runtime_versions_reports_bridge_and_dependencies(self):
+        versions = mcp_bridge.runtime_versions()
+        self.assertEqual(versions["bridge"], mcp_bridge.__version__)
+        for name in ("mcp", "httpx2", "websockets"):
+            self.assertIn(name, versions)
+            self.assertTrue(versions[name])
+
+    def test_startup_log_carries_version(self):
+        env = {
+            "MCP_ENDPOINT": "ws://127.0.0.1:8004/mcp_endpoint/mcp/?token=abc",
+            "MCP_COMMAND": "python",
+        }
+
+        async def fake_run_forever(cfg, stop_event):
+            return None
+
+        with patch.dict(os.environ, env, clear=True), patch.object(
+            mcp_bridge, "run_forever", fake_run_forever
+        ), self.assertLogs("mcp-bridge", level="INFO") as captured:
+            self.assertEqual(mcp_bridge.main([]), 0)
+        joined = "\n".join(captured.output)
+        self.assertIn(f"mcp-bridge {mcp_bridge.__version__}", joined)
+        self.assertIn("mcp ", joined)
+
+    def test_print_config_includes_version(self):
+        cfg = mcp_bridge.BridgeConfig.from_env({
+            "MCP_ENDPOINT": "ws://127.0.0.1:8004/mcp_endpoint/mcp/?token=abc",
+            "MCP_COMMAND": "python",
+        })
+        self.assertEqual(
+            mcp_bridge._public_config(cfg)["version"], mcp_bridge.__version__
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

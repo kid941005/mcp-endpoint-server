@@ -35,6 +35,25 @@ from mcp.types import JSONRPCMessage, jsonrpc_message_adapter
 
 LOG = logging.getLogger("mcp-bridge")
 
+__version__ = "0.0.7"
+
+# 启动日志中一并展示的依赖（发行包名，而非导入名）。
+_RUNTIME_PACKAGES = ("mcp", "httpx2", "websockets")
+
+
+def runtime_versions() -> dict[str, str]:
+    """已安装的关键依赖版本；缺失时记为 unknown，不让版本展示影响启动。"""
+    from importlib.metadata import PackageNotFoundError, version as package_version
+
+    found = {"bridge": __version__}
+    for name in _RUNTIME_PACKAGES:
+        try:
+            found[name] = package_version(name)
+        except PackageNotFoundError:
+            found[name] = "unknown"
+    return found
+
+
 DEFAULT_MAX_SIZE = 16 * 1024 * 1024
 DEFAULT_TIMEOUT = 30.0
 DEFAULT_SSE_READ_TIMEOUT = 300.0
@@ -579,6 +598,7 @@ def _redact_args(args: list[str]) -> list[str]:
 
 def _public_config(cfg: BridgeConfig) -> dict[str, Any]:
     data = asdict(cfg)
+    data["version"] = __version__
     data["endpoint"] = redact_url(cfg.endpoint)
     data["args"] = _redact_args(cfg.args)
     data["headers"] = {key: "***" for key in cfg.headers}
@@ -605,9 +625,15 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     configure_logging(cfg.log_level)
+    versions = runtime_versions()
     LOG.info(
-        "[%s] starting transport=%s endpoint=%s",
+        "[%s] mcp-bridge %s (mcp %s, httpx2 %s, websockets %s) starting "
+        "transport=%s endpoint=%s",
         cfg.name,
+        versions["bridge"],
+        versions["mcp"],
+        versions["httpx2"],
+        versions["websockets"],
         cfg.transport,
         redact_url(cfg.endpoint),
     )

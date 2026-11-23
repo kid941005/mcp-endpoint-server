@@ -7,6 +7,7 @@ import unittest
 from src.utils.aes_utils import decrypt, encrypt, pad_key
 from src.utils.config import ConfigManager
 from src.utils.jsonrpc import JSONRPCProtocol
+from src.utils import __version__, format_runtime_versions, get_runtime_versions
 from src.utils.util import get_local_ip
 
 
@@ -120,6 +121,25 @@ class NetworkUtilTests(unittest.TestCase):
 
     def test_get_local_ip_is_cached(self):
         self.assertEqual(get_local_ip(), get_local_ip())
+
+
+class RuntimeVersionTests(unittest.TestCase):
+    def test_reports_service_version(self):
+        self.assertEqual(get_runtime_versions()["version"], __version__)
+
+    def test_includes_python_and_declared_dependencies(self):
+        versions = get_runtime_versions()
+        self.assertIn("python", versions)
+        self.assertTrue(versions["python"])
+        for name in ("fastapi", "starlette", "uvicorn", "pydantic", "loguru", "pycryptodome"):
+            self.assertIn(name, versions)
+            self.assertTrue(versions[name])
+
+    def test_format_is_single_line_with_every_dependency(self):
+        line = format_runtime_versions()
+        self.assertNotIn("\n", line)
+        for label in ("Python", "FastAPI", "Uvicorn", "Pydantic", "Loguru", "PyCryptodome"):
+            self.assertIn(label, line)
 
 
 if __name__ == "__main__":

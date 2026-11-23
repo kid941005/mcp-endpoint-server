@@ -27,6 +27,7 @@ Bridge **不做 MCP 高层会话处理**：`initialize`、`tools/list`、`tools/
   - 2.x 的 `JSONRPCMessage` 是联合类型、没有 `model_validate`，bridge 改用 `mcp.types.jsonrpc_message_adapter` 校验；上游返回 `result: null` 的响应仍按原始 JSON 透传，不会被丢弃。
   - 2.x 把 `FastMCP` 更名为 `mcp.server.mcpserver.MCPServer`，`host`/`port` 移到 `run()`；自带的 MCP Server 若用旧路径需按 2.x 文档调整（bridge 自身不受影响）。
 - **测试替身**：`tests/fake_fastmcp_server.py` 对 1.x / 2.x 自适应，方便在旧环境跑测试。
+- **启动日志**：启动首行打印 bridge 版本与依赖版本（mcp / httpx2 / websockets），`--print-config` 的 JSON 也包含 `version`，便于核对容器里实际运行的版本。
 
 ## 快速开始
 

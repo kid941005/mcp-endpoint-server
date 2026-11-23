@@ -15,7 +15,7 @@ from .utils.jsonrpc import (
     JSONRPCProtocol,
 )
 from .utils.util import get_local_ip
-from .utils import __version__
+from .utils import __version__, format_runtime_versions
 from contextlib import asynccontextmanager
 from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -66,7 +66,8 @@ async def validate_token_and_get_agent_id(websocket: WebSocket) -> Optional[str]
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     # 启动时
-    logger.info("MCP Endpoint Server 正在启动...")
+    logger.info(f"MCP Endpoint Server v{__version__} 正在启动...")
+    logger.info(f"运行环境: {format_runtime_versions()}")
     local_ip = get_local_ip()
     port = config.getint("server", "port", 8004)
     logger.info(f"健康检查地址: http://{local_ip}:{port}/mcp_endpoint/health")
@@ -78,7 +79,7 @@ async def lifespan(app: FastAPI):
         )
     yield
     # 关闭时
-    logger.info("MCP Endpoint Server 正在关闭，释放连接与待处理请求...")
+    logger.info(f"MCP Endpoint Server v{__version__} 正在关闭，释放连接与待处理请求...")
     await connection_manager.shutdown()
     logger.info("MCP Endpoint Server 已关闭")
 
@@ -305,7 +306,7 @@ def main():
     port = config.getint("server", "port", 8004)
     debug = config.getboolean("server", "debug", False)
 
-    logger.info(f"启动MCP Endpoint Server: {host}:{port}")
+    logger.info(f"启动MCP Endpoint Server v{__version__}: {host}:{port}")
 
     # 启动服务器
     uvicorn.run(

@@ -1,10 +1,14 @@
 """HTTP and WebSocket endpoint tests."""
+import io
 import unittest
+
+from loguru import logger as loguru_logger
 
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from src.server import app
+from src.utils import __version__
 from src.utils.config import config
 
 
@@ -82,6 +86,22 @@ class WebSocketAuthTests(unittest.TestCase):
                 with client.websocket_connect("/mcp_endpoint/call/?token=bad") as websocket:
                     websocket.receive_text()
         self.assertEqual(ctx.exception.code, 1008)
+
+
+class StartupLogTests(unittest.TestCase):
+    def test_lifespan_logs_version_and_runtime_environment(self):
+        buffer = io.StringIO()
+        sink_id = loguru_logger.add(
+            buffer, format="{message}", level="INFO", colorize=False
+        )
+        try:
+            with TestClient(app):
+                pass
+        finally:
+            loguru_logger.remove(sink_id)
+        logged = buffer.getvalue()
+        self.assertIn(f"MCP Endpoint Server v{__version__} 正在启动", logged)
+        self.assertIn("运行环境: Python ", logged)
 
 
 if __name__ == "__main__":
