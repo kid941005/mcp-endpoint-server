@@ -15,31 +15,7 @@ services:
     # Health check comes from the image (mcp-bridge/healthcheck.py); no compose
     # override needed. Inspect it with:
     #   docker inspect --format '{{.State.Health.Status}}' mcp-bridge
-    labels:
-      # Picked up by the autoheal sidecar below.
-      - "autoheal=true"
     # stdio mode: this image only contains the bridge, not the MCP server.
     # Add the server code/dependencies to the image, or mount them here:
     # volumes:
     #   - ./your-mcp-server:/app/server:ro
-
-  # `restart: unless-stopped` does NOT act on an unhealthy container: Docker only
-  # restarts on process exit. This sidecar polls container health and restarts the
-  # ones labelled `autoheal=true`, which is how the HEALTHCHECK from the image
-  # actually becomes self-healing on a single host.
-  #
-  # Security note: mounting docker.sock grants the sidecar root-equivalent control
-  # of the host. Only run it on hosts where that is acceptable, and keep the image
-  # pinned to a release tag (or better, a digest).
-  autoheal:
-    image: willfarrell/autoheal:1.2.0
-    container_name: mcp-bridge-autoheal
-    restart: unless-stopped
-    environment:
-      # Default is the label name `autoheal`; any value on the label matches.
-      AUTOHEAL_CONTAINER_LABEL: autoheal
-      # Grace period before monitoring starts, and the poll interval (seconds).
-      AUTOHEAL_START_PERIOD: "10"
-      AUTOHEAL_INTERVAL: "15"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
