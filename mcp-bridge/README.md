@@ -18,6 +18,16 @@ MCP 客户端连接真正的 MCP Server，把 JSON-RPC 原样转发。
 Bridge **不做 MCP 高层会话处理**：`initialize`、`tools/list`、`tools/call`、
 通知等全部透传，所以协议版本由两端自行协商，兼容 MCP 2025-06-18（Server 2.3）。
 
+## 兼容性
+
+- **MCP SDK**：需要 mcp 2.3.x（`mcp>=2.3.0,<3`），HTTP 栈随之使用 `httpx2>=2.10,<3`。本组件已从 mcp 1.30 迁移完成，运行时不再支持 1.x。
+- **协议版本**：bridge 不解析 `initialize`，由两端协商，实测兼容 MCP `2025-06-18`。
+- **2.x 迁移带来的变化**（自行改代码或替换依赖时注意）：
+  - Streamable HTTP 的 headers 与超时在 2.x 改由内部 HTTP 客户端承载，环境变量不变（`MCP_HEADERS`、`MCP_TIMEOUT` 行为一致）。
+  - 2.x 的 `JSONRPCMessage` 是联合类型、没有 `model_validate`，bridge 改用 `mcp.types.jsonrpc_message_adapter` 校验；上游返回 `result: null` 的响应仍按原始 JSON 透传，不会被丢弃。
+  - 2.x 把 `FastMCP` 更名为 `mcp.server.mcpserver.MCPServer`，`host`/`port` 移到 `run()`；自带的 MCP Server 若用旧路径需按 2.x 文档调整（bridge 自身不受影响）。
+- **测试替身**：`tests/fake_fastmcp_server.py` 对 1.x / 2.x 自适应，方便在旧环境跑测试。
+
 ## 快速开始
 
 ### 1. 从 endpoint server 获取工具端地址

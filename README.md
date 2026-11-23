@@ -33,6 +33,7 @@
 - 详细说明：[mcp-bridge/README.md](./mcp-bridge/README.md)
 - 支持传输：`stdio`、`sse`、`streamable-http`
 - 特性：原始 JSON-RPC 透传、断线重连、Docker 部署、日志隐藏 token
+- 依赖：mcp 2.3.x（`mcp>=2.3.0,<3`）与 `httpx2`；bridge 不解析 `initialize`，兼容 MCP 协议 `2025-06-18`
 
 ### 快速使用
 
