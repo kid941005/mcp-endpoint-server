@@ -25,13 +25,13 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, AsyncIterator, Mapping
 from urllib.parse import urlsplit, urlunsplit
 
-import httpx
+import httpx2
 import websockets
 from mcp.client.sse import sse_client
 from mcp.client.stdio import StdioServerParameters, stdio_client
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client as streamablehttp_client
 from mcp.shared.message import SessionMessage
-from mcp.types import JSONRPCMessage
+from mcp.types import JSONRPCMessage, jsonrpc_message_adapter
 
 LOG = logging.getLogger("mcp-bridge")
 
@@ -305,31 +305,30 @@ async def open_transport(cfg: BridgeConfig) -> AsyncIterator[tuple[Any, Any]]:
         return
 
     if cfg.transport == "streamable-http":
-        async with streamablehttp_client(
-            cfg.url,
-            headers=cfg.headers,
-            timeout=cfg.timeout,
-            sse_read_timeout=cfg.sse_read_timeout,
-            httpx_client_factory=http_client_factory,
-        ) as streams:
-            if len(streams) >= 3:
-                try:
-                    session_id = streams[2]()
-                except Exception:
-                    session_id = None
-                if session_id:
-                    LOG.info("[%s] Streamable HTTP session: %s", cfg.name, session_id)
-            yield streams[0], streams[1]
+        # mcp 2.x takes a pre-configured httpx2 client instead of headers and
+        # timeouts, and the transport yields exactly (read_stream, write_stream).
+        async with http_client_factory(headers=cfg.headers) as http_client:
+            async with streamablehttp_client(
+                cfg.url, http_client=http_client
+            ) as streams:
+                if len(streams) >= 3:
+                    try:
+                        session_id = streams[2]()
+                    except Exception:
+                        session_id = None
+                    if session_id:
+                        LOG.info("[%s] Streamable HTTP session: %s", cfg.name, session_id)
+                yield streams[0], streams[1]
         return
 
     raise ConfigError(f"unsupported transport: {cfg.transport}")
 
 
 def _make_httpx_client_factory(cfg: BridgeConfig):
-    """Build an httpx client factory that respects MCP_HTTP_TRUST_ENV.
+    """Build an httpx2 client factory that respects MCP_HTTP_TRUST_ENV.
 
-    httpx reads proxy settings from the environment by default.  A malformed
-    NO_PROXY entry (for example a bare IPv6 address) makes httpx raise while
+    httpx2 reads proxy settings from the environment by default.  A malformed
+    NO_PROXY entry (for example a bare IPv6 address) makes httpx2 raise while
     constructing the client, before any MCP request is sent.  MCP servers are
     usually local or internal, so environment proxies are off by default and
     can be enabled explicitly with MCP_HTTP_TRUST_ENV=1.
@@ -337,13 +336,13 @@ def _make_httpx_client_factory(cfg: BridgeConfig):
 
     def factory(headers=None, timeout=None, auth=None):
         if timeout is None:
-            timeout = httpx.Timeout(cfg.timeout, read=cfg.sse_read_timeout)
+            timeout = httpx2.Timeout(cfg.timeout, read=cfg.sse_read_timeout)
         kwargs = {"timeout": timeout, "trust_env": cfg.trust_env}
         if headers is not None:
             kwargs["headers"] = headers
         if auth is not None:
             kwargs["auth"] = auth
-        return httpx.AsyncClient(**kwargs)
+        return httpx2.AsyncClient(**kwargs)
 
     return factory
 
@@ -424,7 +423,7 @@ async def relay_ws_to_remote(websocket: Any, write_stream: Any, name: str) -> No
             LOG.warning("[%s] ignored non-JSON WebSocket message: %s", name, str(raw)[:200])
             continue
         try:
-            message: Any = JSONRPCMessage.model_validate(data)
+            message: Any = jsonrpc_message_adapter.validate_python(data)
         except Exception as exc:  # pydantic validation errors
             if _is_null_result_response(data):
                 LOG.warning(

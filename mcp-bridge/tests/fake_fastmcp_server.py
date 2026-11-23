@@ -5,7 +5,14 @@ from __future__ import annotations
 
 import sys
 
-from mcp.server.fastmcp import FastMCP
+try:  # mcp >= 2
+    from mcp.server.mcpserver import MCPServer as FastMCP
+
+    _SERVER_TAKES_HOST = True
+except ImportError:  # mcp 1.x
+    from mcp.server.fastmcp import FastMCP
+
+    _SERVER_TAKES_HOST = False
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -19,14 +26,18 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError:
         print(f"invalid port: {argv[1]!r}", file=sys.stderr)
         return 2
-    server = FastMCP("fake-fastmcp", host="127.0.0.1", port=port)
+    if _SERVER_TAKES_HOST:
+        server = FastMCP("fake-fastmcp")
+    else:
+        server = FastMCP("fake-fastmcp", host="127.0.0.1", port=port)
 
     @server.tool()
     def echo(text: str) -> str:
         """Echo text back with a prefix."""
         return "echo:" + text
 
-    server.run(transport=transport)
+    run_kwargs = {"host": "127.0.0.1", "port": port} if _SERVER_TAKES_HOST else {}
+    server.run(transport=transport, **run_kwargs)
     return 0
 
 

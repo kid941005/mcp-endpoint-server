@@ -159,7 +159,9 @@ class TransportSelectionTests(unittest.IsolatedAsyncioTestCase):
             async with mcp_bridge.open_transport(cfg) as streams:
                 self.assertEqual(len(streams), 2)
         self.assertEqual(calls[0][0], ("http://127.0.0.1:8080/mcp",))
-        self.assertEqual(calls[0][1]["headers"], {"X-Test": "1"})
+        client = calls[0][1]["http_client"]
+        self.assertEqual(client.headers.get("X-Test"), "1")
+        self.assertEqual(client.timeout.read, 8.0)
 
 
 def _free_port() -> int:
@@ -386,7 +388,7 @@ class WirePayloadTests(unittest.TestCase):
     """_dump_message keeps result even when null; only null id/error/params are dropped."""
 
     def _dump(self, raw):
-        message = mcp_bridge.JSONRPCMessage.model_validate(raw)
+        message = mcp_bridge.jsonrpc_message_adapter.validate_python(raw)
         return json.loads(mcp_bridge._dump_message(message))
 
     def test_null_result_is_preserved_and_null_id_dropped(self):

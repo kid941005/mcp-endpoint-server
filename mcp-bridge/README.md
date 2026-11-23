@@ -96,7 +96,7 @@ docker compose -f docker-compose.example.yml up -d --build
 | `MCP_HEADERS` | 否 | `{}` | JSON 对象，HTTP 请求头 |
 | `MCP_TIMEOUT` | 否 | `30` | 连接/HTTP 超时秒数 |
 | `MCP_SSE_READ_TIMEOUT` | 否 | `300` | SSE 读超时秒数 |
-| `MCP_HTTP_TRUST_ENV` | 否 | `0` | 是否读取 `HTTP_PROXY`/`NO_PROXY`；默认关闭，避免畸形 `NO_PROXY` 让 httpx 启动失败 |
+| `MCP_HTTP_TRUST_ENV` | 否 | `0` | 是否读取 `HTTP_PROXY`/`NO_PROXY`；默认关闭，避免畸形 `NO_PROXY` 让 HTTP 客户端启动失败 |
 | `MCP_MAX_SIZE` | 否 | `16777216` | WebSocket 最大消息字节；`0` 表示不限制 |
 | `MCP_RECONNECT_INITIAL` | 否 | `1` | 重连初始秒数 |
 | `MCP_RECONNECT_MAX` | 否 | `60` | 重连最大秒数 |
@@ -126,7 +126,7 @@ python -m unittest discover -s tests -p 'test_mcp_bridge.py' -v
 ```
 
 测试覆盖配置解析、stdio 端到端、SSE 端到端和 Streamable HTTP 端到端；
-后两者会启动一个真实的 FastMCP 测试服务。
+后两者会启动一个真实的 MCP 测试服务（mcp 2.x 的 `MCPServer`）。
 
 ## 注意
 
