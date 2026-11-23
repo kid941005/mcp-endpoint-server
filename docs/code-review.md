@@ -469,3 +469,56 @@
   - core tests `45135918603` ✅ Python 3.11 job `137562030051` / 3.12 job `137562030489`；实装 fastapi-0.165.0、pycryptodome-4.6.0、coverage-7.17.4，`Ran 68 tests ... OK`
   - mcp-bridge tests `45135918543` ✅ 3.12 job `137562030180` / 3.11 job `137562030681`；实装 mcp-2.3.0、httpx2-2.16.2、websockets-17.4，`Ran 38 tests ... OK`
   - docker publish `45135918424` ✅（test 3.11 / 3.12 + build and push）
+
+## 十二、全仓库审核与修复（2026-11-23，落地 `3ea7483`）
+
+### 范围与方法
+按五个维度（分层与职责、架构与可扩展、功能闭环、风格一致性、低级错误）通读 `main.py`、`src/` 全部模块、`mcp-bridge/`、构建文件、四个 workflow、两份 README 与 `tests/`、`mcp-bridge/tests/`。每条问题记录「文件:行 / 现象 / 严重程度」；可直接修的低级缺陷与明显逻辑漏洞当场修并补测试，涉及架构调整、接口变更、大规模重构只出方案不落地。验收：ruff（F,E9,B,RET,PIE,C4）+ 全量单测 + CI 三套。
+
+### 已修复（`3ea7483`，13 个文件）
+
+| 位置 | 问题 | 严重度 | 修改 |
+|---|---|---|---|
+| `src/core/connection_manager.py:421-429` | 聚合异常分支用 `pending.request_id`（原始 id），客户端无法据此还原 `connection_uuid`，错误响应被丢弃 | 严重 | 改用 `pending.transformed_request_id`，并 `logger.error`→`logger.exception` |
+| `src/utils/config.py:25-31` | `_ensure_loaded` 先置 `_loaded=True` 再加载；一次加载失败后永久跳过，后续拿到空配置/空 key | 中等 | 改为加载成功后才置 `_loaded=True`（可重试） |
+| `src/server.py:29-62` | token 解密后可能是合法 JSON 但非对象（`[]`/`123`/`"str"`），`.get` 抛 AttributeError 冒泡 | 中等 | 加 `isinstance(data, dict)` 校验，失败记日志并 `close(1008)` |
+| `src/handlers/websocket_handler.py:289-303` | 先 `await` 转发再 `remove_pending_response`，await 窗口内重复上行响应会重复聚合、重复回送 | 中等 | 先移除 pending 再聚合转发 |
+| `src/handlers/websocket_handler.py:312-396` | `tools/call` 无 id（通知）也回错误帧；`params` 非对象时 `.get` 抛异常 | 中等 | 无 id 记 warning 直接返回；params 非对象回 `INVALID_PARAMS` |
+| `src/core/connection_manager.py:431-446` | `update_tool_list` 用 `{tool["name"]: tool ...}`，缺 name 抛 KeyError 使整次工具更新失败 | 中等 | 遍历校验，非法项 warning 跳过 |
+| `mcp-bridge/mcp_bridge.py:599-607` | `--print-config` 只脱敏 `endpoint`，`url` 原样输出，MCP_URL 的 token/userinfo 泄露 | 中等（安全） | `redact_url` 增加 userinfo 与 password/signature；`url` 同样脱敏；headers/env 用 `dict.fromkeys` |
+| `src/utils/logger.py:108-118` | `_parse_size` 未知单位 `int()` 抛 ValueError，且发生在模块导入期 → 启动即崩 | 中等 | 支持 B/KB/MB/GB；解析失败打印提示并回退默认大小 |
+| `src/core/connection_manager.py:284-303` | 超时任务无身份校验，同 id 重新注册后旧任务会误取走新 pending 并误报超时 | 轻微/中等 | 传入 pending，sleep 后校验 `is not pending` 再 pop |
+| `mcp-bridge/mcp_bridge.py:180-203` | `float("nan"/"inf")` 通过校验，超时变 NaN | 轻微 | `math.isfinite` 拒绝非有限值 |
+| `mcp-bridge/mcp_bridge.py:113-118` | `MCP_MAX_SIZE` 负数被静默当作关闭限制 | 轻微 | <0 报 ConfigError；0 表示关闭 |
+| `mcp-bridge/mcp_bridge.py:515-539` | `run_forever` 在 `run_once` 正常返回后不重置退避，快速重连时退避翻倍 | 轻微 | 正常返回即重置 `backoff` |
+| `src/utils/aes_utils.py` | 未用 `hashlib`；`raise ValueError(...)` 丢 traceback、`raise e`；`decrypt` 捕获未使用的 `e` | 轻微 | 删未用导入；`raise ... from e` / `except ValueError: raise`；`except ...:` 直接 return None |
+| `src/utils/config.py` | 未用 `Path`；默认配置分支未置 `generated_key`；`get()` 注解与实际可返回 None 不符 | 轻微 | 删导入、补 `generated_key=True`、注解改 `Optional[str]` |
+| `src/utils/logger.py:128-143` | `setup_uvicorn_logging` 内重复 `import logging` | 轻微 | 删除重复导入 |
+| `src/server.py:286,290` | 连接异常用 `logger.error(f"{e}")`，无堆栈 | 轻微 | 改 `logger.exception` |
+| `mcp-bridge/healthcheck.py:11` | 未用 `sys` | 轻微 | 删除 |
+| `src/core/connection_manager.py:117-123` | `elif`/`else` 跟在 return 之后（RET505） | 风格 | 改为独立 `if` / 去 else |
+
+新增测试 7 组：聚合异常返回转换后 id；缺 name 工具被跳过；重复响应只转发一次且 pending 清理；无 id 的 `tools/call` 不回帧；`params` 非对象回 `INVALID_PARAMS`；配置懒加载失败后重试；非对象 token 触发 1008；`MCP_MAX_SIZE` 负数/零、nan 超时、`--print-config` 脱敏。
+
+### 未实施（建议中）
+
+严重/中等（涉及接口、CI 结构或构建策略，未擅自改）：
+- `.github/workflows/core-tests.yml:5-13,15-23` 的 `paths` 不含 `Dockerfile` / `docker-compose.yml` / `.dockerignore`，改 Docker 不触发测试，也没有面向 PR 的 Docker 构建工作流。
+- `mcp-bridge/Dockerfile` 不在任何 CI 构建；`mcp-bridge-tests.yml:54` 只跑单测、无覆盖率门槛。
+- `docker-image.yml:13-17` 授予 `contents:write` / `id-token:write` / `issues:write` 均未使用（仅需 `packages:write`）；`docker-image.yml` 与 `docker-publish.yml` 对 `v*.*.*` 同一 tag 各构建推送一次（ghcr 与 Docker Hub）。
+- 根 `Dockerfile` 无 `HEALTHCHECK`（仅 `docker-compose.yml:20-25` 有），`docker run` 直跑无健康探测。
+- 依赖全部为 `>=x,<y` 浮动区间、无 lock 文件，patch 升级可能漂移。
+
+轻微：
+- 各 workflow 的 `uses:@vN` 未固定 commit SHA；`docker-publish.yml` 无 `permissions`/`timeout-minutes`、matrix 无 `fail-fast:false`、test job 与 `core-tests.yml` 重复。
+- `docker-publish.yml:60` 的 `latest` 只在默认分支启用，`v*` tag 推送不更新 latest，与 `README.md:92` 措辞不符；`docker-image.yml:45` tag 正则只认 `X.Y.Z`，预发布 tag 会落到 else 当 latest。
+- `.dockerignore` 未排除 `docs/`（`schematic.png` 约 346KB、本文件约 70KB 进入构建上下文）；`.gitignore` 只忽略 `*.log`，未显式忽略 `logs/`。
+- 基础镜像 `python:3.12-slim` 未固定 `@sha256` 摘要；`CMD ["python","main.py"]` 下 python 为 PID1，无 tini/dumb-init。
+- `docker-compose.yml:4` 用 `:latest` 浮动；宿主 `data`/`logs` 目录不存在时由 docker 以 root 创建，appuser(1000) 不可写，仅靠注释提示 `chown`。
+- `README.md:91-92` 未提 `docker-image.yml`；`README_dev.md:23-24` 目录树列 `data/`、`logs/` 而仓库并无这两个目录；本文件 `:90` 与 `:120` 称根镜像有 healthcheck，与实际不符（本节即更正依据）。
+- 测试强度：`tests/test_handlers.py:68-74` 两个用例无断言；`tests/test_utils.py:130-136` 断言在缺失包返回 `"unknown"` 时恒真；`tests/test_forwarding_lock.py:14-46` 用 ast/exec 抽取方法体、实现耦合脆弱；`tests/test_integration.py:93-99` 每次新建线程池且丢弃结果；`ToolConflictTests` 与 `DualToolServerRelayTests` 重复覆盖同名工具仲裁；token 的 JSONDecodeError 分支缺有效用例。
+- ruff 余留 `tests/` 内 C408/B905/B904/F401（仅测试文件，未改动）。
+
+### 验证
+- 本地：13 个改动文件 `ast` 语法校验全通过；ruff（`src` + `mcp-bridge/mcp_bridge.py` + `healthcheck.py`）All checks passed；root `Ran 75 tests`，`failures=0`、`errors=5`（均为沙箱在 `%TEMP%` 的 `mkdtemp` 目录内 `CreateFile`/`makedirs` 被拒，4 个既有 + 1 个新增同类用例，属环境限制）；bridge `Ran 42 tests`，`errors=3`（真实子进程 e2e 的 `WinError 5`，环境限制），4 个新增 config 用例全过；配置懒加载重试另在真实目录单独验证通过。
+- CI（提交 `3ea7483`）：`core tests` run `45178239587` ✅（Python 3.11 job `137704987975` / 3.12 job `137704987525`）、`mcp-bridge tests` run `45178239582` ✅（3.11 job `137704987828` / 3.12 job `137704988170`）、`docker publish` run `45178239918` ✅（test 3.12 job `137704988851` / 3.11 job `137704989245` / build and push job `137705140824`）。
