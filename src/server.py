@@ -50,6 +50,11 @@ async def validate_token_and_get_agent_id(websocket: WebSocket) -> Optional[str]
 
     try:
         data = json.loads(data)
+        if not isinstance(data, dict):
+            # token 可能是合法 JSON 但不是对象（如 [] / 123 / "str"），不能直接 .get。
+            logger.error("token数据不是JSON对象")
+            await websocket.close(code=1008, reason="token数据格式错误")
+            return None
         agent_id = data.get("agentId")
         if not agent_id:
             logger.error("无对应agentId")
@@ -283,11 +288,11 @@ async def websocket_robot_endpoint(websocket: WebSocket):
             except WebSocketDisconnect:
                 break
             except Exception as e:
-                logger.error(f"处理小智端消息时发生错误: {e}")
+                logger.exception(f"处理小智端消息时发生错误: {e}")
                 break
 
     except Exception as e:
-        logger.error(f"处理小智端连接时发生错误: {e}")
+        logger.exception(f"处理小智端连接时发生错误: {e}")
     finally:
         if connection_uuid:
             await connection_manager.unregister_robot_connection(connection_uuid)

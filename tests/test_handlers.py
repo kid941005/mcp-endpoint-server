@@ -64,6 +64,31 @@ class RobotHandlerTests(unittest.IsolatedAsyncioTestCase):
         forward.assert_not_awaited()
 
 
+    async def test_tool_call_notification_without_id_gets_no_reply(self):
+        handler = handler_module.WebSocketHandler()
+        with patch.object(
+            handler_module.connection_manager, "forward_to_robot_by_uuid", AsyncMock(return_value=True)
+        ) as forward:
+            await handler._handle_tool_call_request(
+                {"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "x"}},
+                "agent", "robot", None,
+            )
+        forward.assert_not_awaited()
+
+    async def test_tool_call_with_non_object_params_returns_invalid_params(self):
+        handler = handler_module.WebSocketHandler()
+        with patch.object(
+            handler_module.connection_manager, "forward_to_robot_by_uuid", AsyncMock(return_value=True)
+        ) as forward:
+            await handler._handle_tool_call_request(
+                {"jsonrpc": "2.0", "id": 11, "method": "tools/call", "params": [1, 2]},
+                "agent", "robot", 11,
+            )
+        sent = forward.await_args.args[1]
+        self.assertEqual(sent["error"]["code"], JSONRPCProtocol.INVALID_PARAMS)
+        self.assertEqual(sent["id"], 11)
+
+
 class ServerMessageHandlerTests(unittest.IsolatedAsyncioTestCase):
     async def test_invalid_server_json_is_ignored(self):
         handler = handler_module.WebSocketHandler()

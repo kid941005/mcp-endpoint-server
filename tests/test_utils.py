@@ -89,6 +89,27 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(manager.get("server", "key"), key)
 
 
+class ConfigLazyLoadRetryTests(unittest.TestCase):
+    def test_failed_load_is_retried_on_next_access(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "server.cfg")
+            manager = ConfigManager(path)
+            original = manager._load_config
+            calls = {"n": 0}
+
+            def flaky():
+                calls["n"] += 1
+                if calls["n"] == 1:
+                    raise OSError("disk hiccup")
+                original()
+
+            manager._load_config = flaky
+            with self.assertRaises(OSError):
+                manager.get("server", "key")
+            # 首次失败不得把 _loaded 永久置位，下次访问应成功加载
+            self.assertEqual(len(manager.get("server", "key")), 32)
+
+
 class ConfigPeekTests(unittest.TestCase):
     """peek* 只读读取：不得创建/改写配置文件，供 import 期使用。"""
 

@@ -88,7 +88,15 @@ class LoggerManager:
 
             # 获取文件大小限制
             max_file_size = config.peek("logging", "max_file_size", "10MB")
-            max_bytes = self._parse_size(max_file_size)
+            try:
+                max_bytes = self._parse_size(max_file_size)
+            except ValueError:
+                # 配置写错不应在 import 期崩溃，回退默认 10MB 并提示。
+                print(
+                    f"[logger] 无效的 logging.max_file_size={max_file_size!r}，回退 10MB",
+                    file=sys.stderr,
+                )
+                max_bytes = 10 * 1024 * 1024
 
             # 获取备份数量
             backup_count = config.peekint("logging", "backup_count", 5)
@@ -106,16 +114,19 @@ class LoggerManager:
             )
 
     def _parse_size(self, size_str: str) -> int:
-        """解析文件大小字符串"""
-        size_str = size_str.upper()
-        if size_str.endswith("MB"):
-            return int(float(size_str[:-2]) * 1024 * 1024)
-        elif size_str.endswith("KB"):
-            return int(float(size_str[:-2]) * 1024)
-        elif size_str.endswith("B"):
-            return int(size_str[:-1])
-        else:
-            return int(size_str)
+        """解析文件大小字符串（B/KB/MB/GB，大小写不敏感）。"""
+        text = str(size_str).strip().upper()
+        for suffix, factor in (("GB", 1024 ** 3), ("MB", 1024 ** 2), ("KB", 1024), ("B", 1)):
+            if text.endswith(suffix):
+                number = text[: -len(suffix)].strip()
+                try:
+                    return int(float(number) * factor)
+                except ValueError as exc:
+                    raise ValueError(f"无效的文件大小配置: {size_str!r}") from exc
+        try:
+            return int(float(text))
+        except ValueError as exc:
+            raise ValueError(f"无效的文件大小配置: {size_str!r}") from exc
 
     def get_logger(self):
         """获取日志器"""
@@ -127,8 +138,6 @@ class LoggerManager:
 
     def setup_uvicorn_logging(self):
         """设置uvicorn日志拦截"""
-        import logging
-
         # 拦截标准库日志
         logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
 

@@ -116,11 +116,10 @@ class ConnectionManager:
         """转换JSON-RPC ID"""
         if isinstance(original_id, int):
             return f"{connection_uuid}_n_{original_id}"
-        elif isinstance(original_id, str):
+        if isinstance(original_id, str):
             return f"{connection_uuid}_s_{original_id}"
-        else:
-            # 其他类型转换为字符串
-            return f"{connection_uuid}_s_{str(original_id)}"
+        # 其他类型转换为字符串
+        return f"{connection_uuid}_s_{str(original_id)}"
 
     def _restore_jsonrpc_id(self, transformed_id: Any) -> Tuple[Optional[str], Any]:
         """还原JSON-RPC ID，返回(connection_uuid, original_id)"""
@@ -277,19 +276,20 @@ class ConnectionManager:
         )
         self.pending_responses[transformed_request_id] = pending
         pending.timeout_task = asyncio.create_task(
-            self._expire_pending_response(transformed_request_id)
+            self._expire_pending_response(transformed_request_id, pending)
         )
         logger.debug(f"注册待处理响应: {transformed_request_id}, 期望连接: {expected_connections}")
 
-    async def _expire_pending_response(self, transformed_request_id: str):
+    async def _expire_pending_response(self, transformed_request_id: str, pending: PendingResponse):
         """超时清理未完成的请求，避免永久挂起与内存泄漏。"""
         try:
             await asyncio.sleep(self.pending_timeout)
         except asyncio.CancelledError:
             return
-        pending = self.pending_responses.pop(transformed_request_id, None)
-        if pending is None:
+        # 若该 id 已被重新注册为新的 pending，旧超时任务不得取走新对象并误报超时。
+        if self.pending_responses.get(transformed_request_id) is not pending:
             return
+        self.pending_responses.pop(transformed_request_id, None)
         logger.warning(f"等待 MCP 响应超时: {transformed_request_id}")
         error_message = {
             "jsonrpc": "2.0",
@@ -417,10 +417,11 @@ class ConnectionManager:
             return {"jsonrpc": "2.0", "id": response_id, "result": aggregated}
 
         except Exception as e:
-            logger.error(f"聚合响应时发生错误: {e}")
+            logger.exception(f"聚合响应时发生错误: {e}")
             return {
                 "jsonrpc": "2.0",
-                "id": pending.request_id,
+                # 必须用转换后的 id，客户端才能据此还原 connection_uuid 并收到该错误。
+                "id": pending.transformed_request_id,
                 "error": {
                     "code": -32603,
                     "message": "聚合响应时发生错误",
@@ -432,8 +433,18 @@ class ConnectionManager:
         """更新工具列表；跨服务器同名工具会告警（调用路由存在歧义）。"""
         if agent_id in self.mcp_server_connections and mcp_connection_uuid in self.mcp_server_connections[agent_id]:
             mcp_conn = self.mcp_server_connections[agent_id][mcp_connection_uuid]
-            mcp_conn.tools = {tool["name"]: tool for tool in tools}
-            logger.debug(f"已更新工具列表: {agent_id} (UUID: {mcp_connection_uuid}), 工具数量: {len(tools)}")
+            tool_map: Dict[str, Any] = {}
+            for tool in tools:
+                name = tool.get("name") if isinstance(tool, dict) else None
+                if not name:
+                    # 单个非法工具项不应让本次工具列表更新整体失败。
+                    logger.warning(
+                        f"忽略缺少 name 的工具定义: {agent_id} (UUID: {mcp_connection_uuid})"
+                    )
+                    continue
+                tool_map[name] = tool
+            mcp_conn.tools = tool_map
+            logger.debug(f"已更新工具列表: {agent_id} (UUID: {mcp_connection_uuid}), 工具数量: {len(tool_map)}")
             for other_uuid, other_conn in self.mcp_server_connections[agent_id].items():
                 if other_uuid == mcp_connection_uuid:
                     continue

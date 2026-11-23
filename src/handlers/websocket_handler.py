@@ -288,6 +288,8 @@ class WebSocketHandler:
 
     async def _forward_aggregated_response(self, pending, transformed_request_id: str) -> None:
         """聚合待处理响应并回送小智端，随后清理 pending。"""
+        # 先移除 pending 再 await 转发：否则 await 窗口内重复上行的响应会被再次聚合、重复回送。
+        connection_manager.remove_pending_response(transformed_request_id)
         aggregated_response = connection_manager.aggregate_responses(pending)
         connection_uuid, restored_message = connection_manager.restore_jsonrpc_message(
             aggregated_response
@@ -300,7 +302,6 @@ class WebSocketHandler:
                 logger.error(f"转发聚合响应给小智端失败: {connection_uuid}")
         else:
             logger.error("聚合响应缺少目标小智端连接信息")
-        connection_manager.remove_pending_response(transformed_request_id)
 
     def _is_tool_call_request(self, message_data: dict) -> bool:
         """检查是否为工具调用请求"""
@@ -312,9 +313,21 @@ class WebSocketHandler:
     async def _handle_tool_call_request(self, message_data: dict, agent_id: str, connection_uuid: str, request_id):
         """处理工具调用请求"""
         try:
+            # 无 id 的 tools/call 属于通知，按 JSON-RPC 规范不得回送任何响应。
+            if request_id is None:
+                logger.warning(f"收到无 id 的 tools/call 通知，已忽略: {agent_id}")
+                return
             params = message_data.get("params", {})
+            if not isinstance(params, dict):
+                await self._reply_error(
+                    connection_uuid,
+                    request_id,
+                    JSONRPCProtocol.INVALID_PARAMS,
+                    "params 必须是对象",
+                )
+                return
             tool_name = params.get("name")
-            
+
             if not tool_name:
                 await self._reply_error(
                     connection_uuid,

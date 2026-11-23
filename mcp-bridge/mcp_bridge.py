@@ -16,6 +16,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import math
 import os
 import shlex
 import signal
@@ -31,7 +32,7 @@ from mcp.client.sse import sse_client
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamable_http_client as streamablehttp_client
 from mcp.shared.message import SessionMessage
-from mcp.types import JSONRPCMessage, jsonrpc_message_adapter
+from mcp.types import JSONRPCMessage, jsonrpc_message_adapter  # noqa: F401  再导出保留（测试引用）
 
 LOG = logging.getLogger("mcp-bridge")
 
@@ -113,7 +114,9 @@ class BridgeConfig:
         name = _get(source, "MCP_SERVER_NAME") or "mcp"
         headers = _json_object(source, "MCP_HEADERS")
         max_size = _int_value(source, "MCP_MAX_SIZE", DEFAULT_MAX_SIZE)
-        if max_size is not None and max_size <= 0:
+        if max_size is not None and max_size < 0:
+            raise ConfigError("MCP_MAX_SIZE must be >= 0 (0 disables the limit)")
+        if max_size == 0:
             max_size = None
 
         cfg = cls(
@@ -180,9 +183,12 @@ def _float_value(env: Mapping[str, str], key: str, default: float) -> float:
     if raw is None:
         return default
     try:
-        return float(raw)
+        value = float(raw)
     except ValueError as exc:
         raise ConfigError(f"{key} must be a number") from exc
+    if not math.isfinite(value):
+        raise ConfigError(f"{key} must be a finite number")
+    return value
 
 
 def _optional_float(env: Mapping[str, str], key: str, default: float | None) -> float | None:
@@ -193,6 +199,8 @@ def _optional_float(env: Mapping[str, str], key: str, default: float | None) -> 
         value = float(raw)
     except ValueError as exc:
         raise ConfigError(f"{key} must be a number") from exc
+    if not math.isfinite(value):
+        raise ConfigError(f"{key} must be a finite number")
     return None if value <= 0 else value
 
 
@@ -274,10 +282,12 @@ def redact_url(url: str) -> str:
     """Hide token-like query parameters before logging a URL."""
     try:
         parts = urlsplit(url)
-        if not parts.query:
-            return url
+        # 用户名/密码（user:pass@host）同样属于凭据，一并打码。
+        netloc = parts.netloc
+        if "@" in netloc:
+            netloc = "***@" + netloc.rsplit("@", 1)[1]
         query = []
-        for item in parts.query.split("&"):
+        for item in parts.query.split("&") if parts.query else []:
             key, sep, _value = item.partition("=")
             if sep and key.lower() in {
                 "token",
@@ -286,11 +296,14 @@ def redact_url(url: str) -> str:
                 "apikey",
                 "access_token",
                 "secret",
+                "password",
+                "sig",
+                "signature",
             }:
                 query.append(f"{key}=***")
             else:
                 query.append(item)
-        return urlunsplit(parts._replace(query="&".join(query)))
+        return urlunsplit(parts._replace(netloc=netloc, query="&".join(query)))
     except Exception:
         return "<invalid-url>"
 
@@ -519,6 +532,8 @@ async def run_forever(cfg: BridgeConfig, stop_event: asyncio.Event) -> None:
         started = time.monotonic()
         try:
             await run_once(cfg, stop_event)
+            # 正常返回（连接干净关闭）视为一次成功，重置退避，避免快速重连时退避翻倍。
+            backoff = cfg.reconnect_initial
             if not stop_event.is_set():
                 LOG.warning("[%s] bridge stopped (one side closed)", cfg.name)
         except asyncio.CancelledError:
@@ -601,9 +616,12 @@ def _public_config(cfg: BridgeConfig) -> dict[str, Any]:
     data["version"] = __version__
     data["endpoint"] = redact_url(cfg.endpoint)
     data["args"] = _redact_args(cfg.args)
-    data["headers"] = {key: "***" for key in cfg.headers}
+    if cfg.url:
+        # asdict 里的 url 原样包含 token/userinfo，必须同样脱敏。
+        data["url"] = redact_url(cfg.url)
+    data["headers"] = dict.fromkeys(cfg.headers, "***")
     if cfg.env is not None:
-        data["env"] = {key: "***" for key in cfg.env}
+        data["env"] = dict.fromkeys(cfg.env, "***")
     return data
 
 

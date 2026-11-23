@@ -54,6 +54,14 @@ class AggregateTests(unittest.TestCase):
         self.assertEqual(result["error"]["message"], "boom")
         self.assertNotIn("result", result)
 
+    def test_aggregate_exception_returns_transformed_id(self):
+        pending = self._pending({})
+        pending.received_responses = object()  # 触发聚合内部异常
+        result = ConnectionManager().aggregate_responses(pending)
+        # 必须回传转换后的 id，客户端才能还原 connection_uuid 收到该错误
+        self.assertEqual(result["id"], "uuid_n_1")
+        self.assertEqual(result["error"]["code"], -32603)
+
     def test_tools_are_merged_without_extra_result_keys(self):
         pending = self._pending({
             "a": {"jsonrpc": "2.0", "id": "uuid_n_1", "result": {"tools": [{"name": "x"}]}},
@@ -151,6 +159,15 @@ class PendingLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
 
 class RegistryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_update_tool_list_skips_entries_without_name(self):
+        manager = ConnectionManager()
+        websocket = SimpleNamespace(send_text=AsyncMock())
+        mcp_uuid = await manager.register_mcp_server_connection("agent", websocket)
+        manager.update_tool_list(
+            "agent", mcp_uuid, [{"name": "ok"}, {"description": "no-name"}]
+        )
+        self.assertEqual([t["name"] for t in manager.get_all_tools("agent")], ["ok"])
+
     async def test_register_tools_stats_and_unregister(self):
         manager = ConnectionManager()
         websocket = SimpleNamespace(send_text=AsyncMock())
@@ -253,6 +270,23 @@ class ToolConflictTests(unittest.IsolatedAsyncioTestCase):
             stats["tool_conflicts"],
             [{"agent_id": "agent", "tool": "echo", "uuids": [low, high]}],
         )
+
+
+class AggregatedForwardTests(unittest.IsolatedAsyncioTestCase):
+    async def test_duplicate_response_is_forwarded_only_once(self):
+        manager = ConnectionManager()
+        manager.forward_to_robot_by_uuid = AsyncMock(return_value=True)
+        manager.register_pending_response("uuid_n_1", 1, "robot", ["mcp"])
+        response = {"jsonrpc": "2.0", "id": "uuid_n_1", "result": {"ok": True}}
+        pending = manager.add_server_response("uuid_n_1", "mcp", response)
+        self.assertIsNotNone(pending)
+        handler = handler_module.WebSocketHandler()
+        with patch.object(handler_module, "connection_manager", manager):
+            await handler._forward_aggregated_response(pending, "uuid_n_1")
+            # 重复回包时 pending 已移除，不得再次聚合/回送
+            self.assertIsNone(manager.add_server_response("uuid_n_1", "mcp", response))
+        self.assertEqual(manager.forward_to_robot_by_uuid.await_count, 1)
+        self.assertNotIn("uuid_n_1", manager.pending_responses)
 
 
 if __name__ == "__main__":

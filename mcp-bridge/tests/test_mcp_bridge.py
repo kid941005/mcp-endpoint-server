@@ -75,6 +75,41 @@ class ConfigTests(unittest.TestCase):
         self.assertIn("token=***", redacted)
         self.assertIn("x=1", redacted)
 
+    def test_negative_max_size_is_config_error(self):
+        with self.assertRaises(mcp_bridge.ConfigError):
+            mcp_bridge.BridgeConfig.from_env({
+                "MCP_ENDPOINT": "ws://127.0.0.1:8004/mcp_endpoint/mcp/?token=abc",
+                "MCP_COMMAND": "python",
+                "MCP_MAX_SIZE": "-1",
+            })
+
+    def test_zero_max_size_disables_limit(self):
+        cfg = mcp_bridge.BridgeConfig.from_env({
+            "MCP_ENDPOINT": "ws://127.0.0.1:8004/mcp_endpoint/mcp/?token=abc",
+            "MCP_COMMAND": "python",
+            "MCP_MAX_SIZE": "0",
+        })
+        self.assertIsNone(cfg.max_size)
+
+    def test_non_finite_timeout_is_config_error(self):
+        with self.assertRaises(mcp_bridge.ConfigError):
+            mcp_bridge.BridgeConfig.from_env({
+                "MCP_ENDPOINT": "ws://127.0.0.1:8004/mcp_endpoint/mcp/?token=abc",
+                "MCP_COMMAND": "python",
+                "MCP_TIMEOUT": "nan",
+            })
+
+    def test_print_config_redacts_url_credentials(self):
+        cfg = mcp_bridge.BridgeConfig.from_env({
+            "MCP_ENDPOINT": "ws://127.0.0.1:8004/mcp_endpoint/mcp/?token=abc",
+            "MCP_TRANSPORT": "sse",
+            "MCP_URL": "http://user:pass@127.0.0.1:8080/sse?token=abc",
+        })
+        public_url = mcp_bridge._public_config(cfg)["url"]
+        self.assertNotIn("abc", public_url)
+        self.assertNotIn("pass", public_url)
+        self.assertIn("token=***", public_url)
+
     def test_http_trust_env_config(self):
         cfg = mcp_bridge.BridgeConfig.from_env({
             "MCP_ENDPOINT": "ws://127.0.0.1:8004/mcp_endpoint/mcp/?token=abc",

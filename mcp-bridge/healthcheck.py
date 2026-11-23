@@ -8,7 +8,6 @@ Inside the image the meaningful signal is that the bridge process is still alive
 from __future__ import annotations
 
 import os
-import sys
 
 
 def bridge_running(proc_root: str = "/proc") -> bool:

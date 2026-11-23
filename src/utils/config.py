@@ -6,7 +6,6 @@ import os
 import configparser
 import secrets
 from typing import Optional
-from pathlib import Path
 
 
 class ConfigManager:
@@ -26,8 +25,9 @@ class ConfigManager:
         """首次访问时才加载配置。"""
         if self._loaded:
             return
-        self._loaded = True
         self._load_config()
+        # 只有加载成功后才标记已加载；否则一次失败会让后续访问永久拿到空配置/空 key。
+        self._loaded = True
 
     def _load_config(self):
         """加载配置文件"""
@@ -109,6 +109,9 @@ class ConfigManager:
         with open(self.config_file, "w", encoding="utf-8") as f:
             self.config.write(f)
 
+        # 默认配置已内置随机 key，视为本次加载生成了密钥（启动流程据此提示）。
+        self.generated_key = True
+
     def _peek_parser(self) -> Optional[configparser.ConfigParser]:
         """只读解析已存在的配置文件（不创建目录/文件、不生成 server.key）。
 
@@ -153,7 +156,7 @@ class ConfigManager:
             return default
         return str(raw).strip().lower() in ("1", "yes", "true", "on")
 
-    def get(self, section: str, key: str, default: Optional[str] = None) -> str:
+    def get(self, section: str, key: str, default: Optional[str] = None) -> Optional[str]:
         """获取配置值"""
         self._ensure_loaded()
         try:

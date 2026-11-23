@@ -4,12 +4,11 @@ from typing import Optional
 
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
-import hashlib
 
 
 def pad_key(key: str) -> bytes:
     """
-    填充密钥到指定长度（16、24或32位）
+    将密钥补齐到 32 字节（标准长度 16/24/32 原样返回）
     @param key: 原始密钥字符串
     @return: 填充后的密钥字节数组
     """
@@ -42,24 +41,24 @@ def encrypt(key: str, plain_text: str) -> str:
             plain_bytes = plain_text.encode("utf-8")
             padded_data = pad(plain_bytes, AES.block_size)
         except Exception as e:
-            raise ValueError(f"明文编码或填充失败: {str(e)}")
+            raise ValueError(f"明文编码或填充失败: {str(e)}") from e
 
         # 加密
         try:
             encrypted_bytes = cipher.encrypt(padded_data)
         except Exception as e:
-            raise ValueError(f"加密失败: {str(e)}")
+            raise ValueError(f"加密失败: {str(e)}") from e
 
         # Base64编码
         try:
             return base64.b64encode(encrypted_bytes).decode("utf-8")
         except Exception as e:
-            raise ValueError(f"Base64编码失败: {str(e)}")
-    except ValueError as e:
-        # 重新抛出ValueError，保持错误类型一致
-        raise e
+            raise ValueError(f"Base64编码失败: {str(e)}") from e
+    except ValueError:
+        # 保持 ValueError 类型并保留原始 traceback
+        raise
     except Exception as e:
-        raise RuntimeError(f"加密过程中发生未知错误: {str(e)}")
+        raise RuntimeError(f"加密过程中发生未知错误: {str(e)}") from e
 
 
 def decrypt(key: str, encrypted_text: str) -> Optional[str]:
@@ -93,10 +92,9 @@ def decrypt(key: str, encrypted_text: str) -> Optional[str]:
             return None
 
         return unpadded_data.decode("utf-8")
-    except ValueError as e:
-        # 重新抛出ValueError，保持错误类型一致
+    except ValueError:
         return None
-    except Exception as e:
+    except Exception:
         return None
 
 # 注意：AES.MODE_ECB 是为兼容既有小智端 token 协议而保留，ECB 无 IV，

@@ -7,8 +7,11 @@ from loguru import logger as loguru_logger
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from urllib.parse import quote
+
 from src.server import app
 from src.utils import __version__
+from src.utils.aes_utils import encrypt
 from src.utils.config import config
 
 
@@ -77,6 +80,16 @@ class WebSocketAuthTests(unittest.TestCase):
         with TestClient(app) as client:
             with self.assertRaises(WebSocketDisconnect) as ctx:
                 with client.websocket_connect("/mcp_endpoint/call/") as websocket:
+                    websocket.receive_text()
+        self.assertEqual(ctx.exception.code, 1008)
+
+    def test_non_object_token_payload_is_rejected(self):
+        token = encrypt(config.get("server", "key", "") or "", "[1, 2]")
+        with TestClient(app) as client:
+            with self.assertRaises(WebSocketDisconnect) as ctx:
+                with client.websocket_connect(
+                    f"/mcp_endpoint/call/?token={quote(token, safe='')}"
+                ) as websocket:
                     websocket.receive_text()
         self.assertEqual(ctx.exception.code, 1008)
 
