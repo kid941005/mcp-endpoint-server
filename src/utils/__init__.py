@@ -4,7 +4,7 @@
 
 import platform
 
-__version__ = "0.0.7"
+__version__ = "0.0.8"
 
 # 启动日志中一并展示的第三方依赖（用发行包名，而非导入名）。
 _RUNTIME_PACKAGES = ("fastapi", "starlette", "uvicorn", "pydantic", "loguru", "pycryptodome")

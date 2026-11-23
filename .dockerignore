@@ -68,4 +68,10 @@ Dockerfile
 
 # 文档
 README*.md
-LICENSE 
+LICENSE
+docs/
+
+# 构建/开发辅助（镜像内不需要）
+requirements-dev.txt
+docker-compose.yml
+.coveragerc

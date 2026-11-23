@@ -1,6 +1,5 @@
 """Core protocol and connection-manager regression tests."""
 import asyncio
-import json
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch

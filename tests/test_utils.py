@@ -155,6 +155,7 @@ class RuntimeVersionTests(unittest.TestCase):
         for name in ("fastapi", "starlette", "uvicorn", "pydantic", "loguru", "pycryptodome"):
             self.assertIn(name, versions)
             self.assertTrue(versions[name])
+            self.assertNotEqual(versions[name], "unknown", f"{name} 未能读取到实际版本")
 
     def test_format_is_single_line_with_every_dependency(self):
         line = format_runtime_versions()

@@ -92,11 +92,15 @@ class RobotHandlerTests(unittest.IsolatedAsyncioTestCase):
 class ServerMessageHandlerTests(unittest.IsolatedAsyncioTestCase):
     async def test_invalid_server_json_is_ignored(self):
         handler = handler_module.WebSocketHandler()
-        await handler._handle_mcp_server_message("agent", "uuid", "not json")
+        before = dict(handler_module.connection_manager.pending_responses)
+        self.assertIsNone(await handler._handle_mcp_server_message("agent", "uuid", "not json"))
+        self.assertEqual(handler_module.connection_manager.pending_responses, before)
 
     async def test_non_object_server_json_is_ignored(self):
         handler = handler_module.WebSocketHandler()
-        await handler._handle_mcp_server_message("agent", "uuid", json.dumps([1, 2]))
+        before = dict(handler_module.connection_manager.pending_responses)
+        self.assertIsNone(await handler._handle_mcp_server_message("agent", "uuid", json.dumps([1, 2])))
+        self.assertEqual(handler_module.connection_manager.pending_responses, before)
 
     async def test_server_request_is_forwarded_to_robot(self):
         """服务器主动请求（sampling/createMessage）应转发给小智端。"""

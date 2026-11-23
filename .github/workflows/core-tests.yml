@@ -7,9 +7,13 @@ on:
       - "src/**"
       - "tests/**"
       - "requirements.txt"
+      - "requirements.lock"
       - "requirements-dev.txt"
       - ".coveragerc"
       - "mcp-endpoint-server.cfg"
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - ".dockerignore"
       - ".github/workflows/core-tests.yml"
   pull_request:
     paths:
@@ -17,9 +21,13 @@ on:
       - "src/**"
       - "tests/**"
       - "requirements.txt"
+      - "requirements.lock"
       - "requirements-dev.txt"
       - ".coveragerc"
       - "mcp-endpoint-server.cfg"
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - ".dockerignore"
       - ".github/workflows/core-tests.yml"
   workflow_dispatch:
 
@@ -49,7 +57,10 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-          cache-dependency-path: requirements-dev.txt
+          cache-dependency-path: |
+            requirements.txt
+            requirements.lock
+            requirements-dev.txt
 
       - name: Install dependencies
         run: |

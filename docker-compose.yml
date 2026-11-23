@@ -8,6 +8,7 @@ services:
     #   dockerfile: Dockerfile
     container_name: mcp-endpoint-server
     restart: always
+    init: true
     ports:
       - "8004:8004"
     environment:

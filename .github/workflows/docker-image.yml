@@ -6,26 +6,20 @@ on:
       - 'v*.*.*'  # 只在以 v 开头的标签推送时触发，例如 v1.0.0
   workflow_dispatch:
 
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: docker-image-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   release:
     name: Release Docker images
     runs-on: ubuntu-latest
-    permissions:
-      packages: write
-      contents: write
-      id-token: write
-      issues: write
+    timeout-minutes: 40
     steps:
-      - name: Check Disk Space
-        run: |
-          df -h
-          docker system df
-
-      - name: Clean up Docker resources
-        run: |
-          docker system prune -af
-          docker builder prune -af
-
       - name: Checkout code
         uses: actions/checkout@v7
 
@@ -39,16 +33,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract version from tag
-        id: get_version
-        run: |
-          if [[ "$GITHUB_REF" =~ ^refs/tags/v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-            echo "VERSION=${BASH_REMATCH[1]}" >> $GITHUB_ENV
-            echo "IS_VERSION=true" >> $GITHUB_ENV
-          else
-            echo "VERSION=latest" >> $GITHUB_ENV
-            echo "IS_VERSION=false" >> $GITHUB_ENV
-          fi
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
       # 构建 MCP Endpoint Server 镜像
       - name: Build and push mcp-endpoint-server
@@ -57,6 +50,8 @@ jobs:
           context: .
           file: Dockerfile
           push: true
-          tags: |
-            ${{ env.IS_VERSION == 'true' && format('ghcr.io/{0}:{1},ghcr.io/{0}:latest', github.repository, env.VERSION) || format('ghcr.io/{0}:latest', github.repository) }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           platforms: linux/amd64,linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

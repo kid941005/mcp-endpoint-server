@@ -94,7 +94,7 @@ class DualToolServerRelayTests(unittest.TestCase):
         try:
             payload = pool.submit(socket_.receive_text).result(timeout=timeout)
         except concurrent.futures.TimeoutError:
-            raise AssertionError("等待消息超时，请求可能被路由到了非预期连接")
+            raise AssertionError("等待消息超时，请求可能被路由到了非预期连接") from None
         finally:
             pool.shutdown(wait=False)
         return json.loads(payload)

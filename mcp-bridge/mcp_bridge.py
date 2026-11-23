@@ -36,7 +36,7 @@ from mcp.types import JSONRPCMessage, jsonrpc_message_adapter  # noqa: F401  再
 
 LOG = logging.getLogger("mcp-bridge")
 
-__version__ = "0.0.7"
+__version__ = "0.0.8"
 
 # 启动日志中一并展示的依赖（发行包名，而非导入名）。
 _RUNTIME_PACKAGES = ("mcp", "httpx2", "websockets")

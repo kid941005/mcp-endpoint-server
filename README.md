@@ -78,7 +78,7 @@ Docker 方式见 [mcp-bridge/docker-compose.example.yml](./mcp-bridge/docker-com
 
 ## Docker 部署
 
-镜像发布在 Docker Hub：`kid941005/mcp-endpoint-server:latest`，版本标签如 `0.0.7`。
+镜像发布在 Docker Hub：`kid941005/mcp-endpoint-server:latest`，版本标签如 `0.0.8`。
 
 ```bash
 docker pull kid941005/mcp-endpoint-server:latest
@@ -88,8 +88,9 @@ docker compose up -d
 - `data/` 保存 `.mcp-endpoint-server.cfg`（含 server.key 与加密 token），`logs/` 保存日志。
 - 容器以非 root 用户 `appuser`（uid 1000）运行，首次部署前确保目录可写：
   `mkdir -p data logs && sudo chown -R 1000:1000 data logs`。
-- 镜像由 GitHub Actions（`.github/workflows/docker-publish.yml`）在推送 `main` 与 `v*` 标签时构建并推送，
-  同时推送 `latest` 与版本号标签；需要仓库 Secrets `DOCKERHUB_USERNAME`、`DOCKERHUB_TOKEN`。
+- 根镜像有两个发布工作流：`.github/workflows/docker-publish.yml` 推送到 Docker Hub（`main` 与 `v*` 标签），
+  `.github/workflows/docker-image.yml` 推送到 GitHub Container Registry（`v*.*.*` 标签）；两者都推送版本号标签，
+  `latest` 仅在默认分支与版本标签时更新；Docker Hub 需要仓库 Secrets `DOCKERHUB_USERNAME`、`DOCKERHUB_TOKEN`。
 
 ## 测试
 

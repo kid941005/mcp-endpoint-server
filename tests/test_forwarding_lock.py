@@ -19,13 +19,13 @@ class ForwardingTests(unittest.IsolatedAsyncioTestCase):
         names = ('forward_to_mcp_server', 'forward_to_robot_by_uuid')
         methods = [n for n in cls.body if getattr(n, 'name', '') in names]
         logger = SimpleNamespace(**{k: lambda *a: None for k in ('debug', 'warning', 'error')})
-        namespace = dict(
-            Any=object,
-            json=json,
-            ConnectionClosed=Closed,
-            logger=logger,
-            asyncio=asyncio,
-        )
+        namespace = {
+            "Any": object,
+            "json": json,
+            "ConnectionClosed": Closed,
+            "logger": logger,
+            "asyncio": asyncio,
+        }
         exec(compile(ast.Module(body=methods, type_ignores=[]), str(source), 'exec'), namespace)
 
         async def send(message):
@@ -45,7 +45,7 @@ class ForwardingTests(unittest.IsolatedAsyncioTestCase):
 
         manager.unregister_mcp_server_connection = unregister
         manager.unregister_robot_connection = unregister
-        for name, args in zip(names, [('agent', 'connection', {}), ('connection', {})]):
+        for name, args in zip(names, [('agent', 'connection', {}), ('connection', {})], strict=False):
             result = await asyncio.wait_for(namespace[name](manager, *args), timeout=1)
             self.assertFalse(result)
             self.assertFalse(manager._lock.locked())

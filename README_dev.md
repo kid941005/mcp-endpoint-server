@@ -20,8 +20,8 @@ mcp-endpoint-server/
 │   └── server.py             # 主服务器
 ├── mcp-bridge/               # stdio/SSE/HTTP 到 WebSocket 的桥
 ├── tests/                    # 单元与端到端测试
-├── data/                     # 运行时配置目录
-├── logs/                     # 日志目录
+├── data/                     # 运行时生成（不入库）
+├── logs/                     # 运行时生成（不入库）
 ├── main.py                   # 主入口
 ├── requirements.txt          # 依赖文件
 ├── requirements-dev.txt      # 测试依赖
