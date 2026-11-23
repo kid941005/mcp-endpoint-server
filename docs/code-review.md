@@ -443,3 +443,29 @@
 注意：coverage 7.17.4、httpx2 2.16.2、websockets 17.4 都要求 Python `>=3.11`，而两个 Dockerfile 都是 `python:3.12-slim`、CI 矩阵为 3.11/3.12，满足；若将来降到 3.10 需回退这三个下限。两套约束均用 `uv pip install --dry-run` 做过全新解析。
 
 验证：`core tests` run 45125286614 ✅（py3.11 job 137528105019 / py3.12 job 137528105429，Ran 64 tests）、`mcp-bridge tests` run 45125286598 ✅（py3.11 job 137528104528 / py3.12 job 137528104999，Ran 35 tests，含 sse 与 streamable-http e2e）、`docker publish` run 45125286604 ✅。
+
+## 十一、启动日志显示版本号（2026-11-23，落地 `81d27be`）
+
+### 需求与落点
+启动日志此前只有格式前缀里的 `[0.0.7]`，在容器里核对「实际跑的是哪个版本、带的是哪套依赖」仍需进容器 `pip show`。本次把版本信息显式写进启动日志。
+
+| 位置 | 改动 |
+|---|---|
+| `src/utils/__init__.py` | 新增 `get_runtime_versions()` / `format_runtime_versions()`：用 `importlib.metadata` 读发行包版本，缺失记 `unknown` 而不抛异常（版本展示不能反过来变成启动故障点） |
+| `src/server.py:69-70` | 启动首行 `MCP Endpoint Server v0.0.7 正在启动...`，随后一行 `运行环境: Python | FastAPI | Uvicorn | Pydantic | Loguru | PyCryptodome` 各自带实际版本号 |
+| `src/server.py:82` / `src/server.py:309` | 关闭日志与 `main()` 的启动行同样带版本号 |
+| `mcp-bridge/mcp_bridge.py` | 新增 `__version__ = "0.0.7"` 与 `runtime_versions()`；启动首行 `[name] mcp-bridge 0.0.7 (mcp 2.3.0, httpx2 2.16.2, websockets 17.4) starting transport=... endpoint=...`（endpoint 仍脱敏）；`--print-config` 的 JSON 增加 `version` 字段 |
+| `README.md` / `mcp-bridge/README.md` | 各补一条「启动日志含版本」说明 |
+
+### 设计取舍
+- 版本取发行包元数据而非 `模块.__version__`：`starlette`、`pydantic-core` 等并不都暴露 `__version__`，`importlib.metadata` 对两者都成立，且不触发额外 import 副作用。
+- 缺失一律降级为 `unknown`：日志展示失败不应阻断启动（对比：`import fastapi` 失败会直接 crash）。
+- 测试：新增 `RuntimeVersionTests`（服务版本、键齐全、单行格式）、`StartupLogTests`（临时 loguru sink 捕获 lifespan 日志，断言版本与「运行环境」行）、`VersionLoggingTests`（bridge `runtime_versions`、启动日志、`--print-config` 版本）。
+- 版本号目前两处各自硬编码 `0.0.7`（根包 `src/utils/__init__.py` 与独立镜像的 `mcp_bridge.py`），与仓库 tag 同步；bridge 无法 import 根包，故保留常量 —— **发版时两处需同时改**（后续可由构建参数注入）。
+
+### 验证
+- 本地（沙箱内）：root 68 项（新增 4）除 4 项 Config 用例受 CreateFile 限制外全过；bridge 38 项（新增 3）仅 3 项真实子进程 e2e 受限制。
+- CI（提交 `81d27be`）：
+  - core tests `45135918603` ✅ Python 3.11 job `137562030051` / 3.12 job `137562030489`；实装 fastapi-0.165.0、pycryptodome-4.6.0、coverage-7.17.4，`Ran 68 tests ... OK`
+  - mcp-bridge tests `45135918543` ✅ 3.12 job `137562030180` / 3.11 job `137562030681`；实装 mcp-2.3.0、httpx2-2.16.2、websockets-17.4，`Ran 38 tests ... OK`
+  - docker publish `45135918424` ✅（test 3.11 / 3.12 + build and push）
