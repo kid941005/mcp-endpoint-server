@@ -90,7 +90,7 @@
 | `docker publish` | push main（镜像构建同时验证 `HEALTHCHECK` 语法） | ✅ success（10:01:55Z 完成） | [45010332608](https://github.com/kid941005/mcp-endpoint-server/actions/runs/45010332608) |
 | `core tests` / `Docker Image CI` | 未触发：本次只改 `mcp-bridge/**`；tag 条件未满足 | — | — |
 
-此前 B 系列各提交的 CI（均 ✅）：`140d279` run 45006954669 / 45006954674，`cc144e00` run 45007976904 / 45007976865，`40a4f56` run 45009512285 / 45009512312，`55f2b19` run 45009751856 / 45009751828；compose 增强 `fbe2b5e` run 45011333703（mcp-bridge tests）/ 45011333655（docker publish）均 ✅；autoheal `4af9d10` run 45011715054 / 45011715087，撤回 `4bbe71f` run 45094979607（mcp-bridge tests）/ 45094979386（docker publish）均 ✅；依赖升级 `93e6669` run 45120989976（core tests：py3.11 / py3.12 均装 pycryptodome-4.6.0，Ran 64 tests OK）/ 45120989951（docker publish，镜像内 pip 解析 4.x 通过）均 ✅；mcp 2.x 迁移 `e6436ff` run 45122822833（mcp-bridge tests：py3.11 / py3.12 均装 mcp-2.3.0 + mcp-types-2.3.0 + httpx2-2.16.2，`Ran 35 tests` 全通过，含 sse 与 streamable-http e2e）/ 45122822762（docker publish）均 ✅；依赖升最新 `cc270947` run 45124458088（core tests：py3.11 / py3.12 均装 fastapi-0.165.0 / uvicorn-0.54.0 / loguru-0.8.0，Ran 64 tests）/ 45124458096（docker publish）均 ✅。
+此前 B 系列各提交的 CI（均 ✅）：`140d279` run 45006954669 / 45006954674，`cc144e00` run 45007976904 / 45007976865，`40a4f56` run 45009512285 / 45009512312，`55f2b19` run 45009751856 / 45009751828；compose 增强 `fbe2b5e` run 45011333703（mcp-bridge tests）/ 45011333655（docker publish）均 ✅；autoheal `4af9d10` run 45011715054 / 45011715087，撤回 `4bbe71f` run 45094979607（mcp-bridge tests）/ 45094979386（docker publish）均 ✅；依赖升级 `93e6669` run 45120989976（core tests：py3.11 / py3.12 均装 pycryptodome-4.6.0，Ran 64 tests OK）/ 45120989951（docker publish，镜像内 pip 解析 4.x 通过）均 ✅；mcp 2.x 迁移 `e6436ff` run 45122822833（mcp-bridge tests：py3.11 / py3.12 均装 mcp-2.3.0 + mcp-types-2.3.0 + httpx2-2.16.2，`Ran 35 tests` 全通过，含 sse 与 streamable-http e2e）/ 45122822762（docker publish）均 ✅；依赖升最新 `cc270947` run 45124458088（core tests：py3.11 / py3.12 均装 fastapi-0.165.0 / uvicorn-0.54.0 / loguru-0.8.0，Ran 64 tests）/ 45124458096（docker publish）均 ✅；其余依赖 `7bbb9fc` run 45125286614（core tests：装 pycryptodome-4.6.0 / httpx-0.28.1 / coverage-7.17.4，Ran 64 tests）/ 45125286598（mcp-bridge tests：装 httpx2-2.16.2 / websockets-17.4，Ran 35 tests）/ 45125286604（docker publish）均 ✅。
 
 ## 一、结构与分层
 
@@ -245,7 +245,7 @@
 
 ## 五、已实施修改（`4dca5650` + `e36ef14` + `fd1d22d` + `d6ae8e5` + `7077bab` + `8718b78` + `d846699` + `2aed70f` + `fbe2b5e` + `4bbe71f` + `93e6669`，2026-11-22～11-23）
 
-提交范围：`4dca5650` 7 files / +241 −101；`e36ef14` 2 files（同名工具去重）；`604a6881` + `fd1d22d` 3 files（`src/server.py`、`tests/test_server.py`、`README.md`，header 鉴权 + 测试修正）；`d6ae8e5` 3 files（`src/core/connection_manager.py`、`tests/test_core.py`、`tests/test_integration.py`，聚合路径去重 + 双工具端 e2e）；`7077bab` 7 files（`src/utils/{util,logger,config,jsonrpc}.py`、`src/server.py`、`src/handlers/websocket_handler.py`、`tests/test_utils.py`，L2–L5/L7 收尾）；`2aed70f` 8 files（bridge 轻微项收尾 + 新增 `mcp-bridge/healthcheck.py`）；`fbe2b5e` 1 file（`mcp-bridge/docker-compose.example.yml`，`env_file` 改 `path/required: false` 并补镜像健康检查说明）；`4af9d10` 曾为同一 compose 示例加 `willfarrell/autoheal` 旁车 + `autoheal=true` 标签，`4bbe71f` 按用户要求撤回：不引入第三方旁车与 docker.sock 挂载，保留 `env_file` 可选与健康检查说明，unhealthy 的处置交回部署侧；`93e6669` 2 files（`requirements.txt` 将 pycryptodome 由 `>=3.20.0,<4.0` 升为 `>=4.0.0,<5.0`，`tests/test_utils.py` 新增 2 项 AES 兼容性用例）；`e6436ff` 5 files（`mcp-bridge/{mcp_bridge.py,requirements.txt,README.md}`、`mcp-bridge/tests/{fake_fastmcp_server.py,test_mcp_bridge.py}`，mcp 1.30 → 2.3.0 迁移）；`257e6ff` 2 files（`README.md` 与 `mcp-bridge/README.md`，补 mcp 2.x 兼容说明：SDK/协议要求、2.x 三处变化、测试替身双版本自适应）；`cc270947` 1 file（`requirements.txt`，fastapi/uvicorn/loguru 升到当前最新）。
+提交范围：`4dca5650` 7 files / +241 −101；`e36ef14` 2 files（同名工具去重）；`604a6881` + `fd1d22d` 3 files（`src/server.py`、`tests/test_server.py`、`README.md`，header 鉴权 + 测试修正）；`d6ae8e5` 3 files（`src/core/connection_manager.py`、`tests/test_core.py`、`tests/test_integration.py`，聚合路径去重 + 双工具端 e2e）；`7077bab` 7 files（`src/utils/{util,logger,config,jsonrpc}.py`、`src/server.py`、`src/handlers/websocket_handler.py`、`tests/test_utils.py`，L2–L5/L7 收尾）；`2aed70f` 8 files（bridge 轻微项收尾 + 新增 `mcp-bridge/healthcheck.py`）；`fbe2b5e` 1 file（`mcp-bridge/docker-compose.example.yml`，`env_file` 改 `path/required: false` 并补镜像健康检查说明）；`4af9d10` 曾为同一 compose 示例加 `willfarrell/autoheal` 旁车 + `autoheal=true` 标签，`4bbe71f` 按用户要求撤回：不引入第三方旁车与 docker.sock 挂载，保留 `env_file` 可选与健康检查说明，unhealthy 的处置交回部署侧；`93e6669` 2 files（`requirements.txt` 将 pycryptodome 由 `>=3.20.0,<4.0` 升为 `>=4.0.0,<5.0`，`tests/test_utils.py` 新增 2 项 AES 兼容性用例）；`e6436ff` 5 files（`mcp-bridge/{mcp_bridge.py,requirements.txt,README.md}`、`mcp-bridge/tests/{fake_fastmcp_server.py,test_mcp_bridge.py}`，mcp 1.30 → 2.3.0 迁移）；`257e6ff` 2 files（`README.md` 与 `mcp-bridge/README.md`，补 mcp 2.x 兼容说明：SDK/协议要求、2.x 三处变化、测试替身双版本自适应）；`cc270947` 1 file（`requirements.txt`，fastapi/uvicorn/loguru 升到当前最新）；`7bbb9fc` 3 files（`requirements.txt`、`requirements-dev.txt`、`mcp-bridge/requirements.txt`，其余依赖抬到最新）。
 
 1. `src/core/connection_manager.py`
    - `PendingResponse.__init__(..., method: Optional[str] = None)` 新增 `method`；`register_pending_response(..., method=None)` 覆盖前 `previous.timeout_task.cancel()`（M5）
@@ -428,3 +428,18 @@
 验证：CI `core tests` run 45124458088（py3.12 job 137525511132 / py3.11 job 137525511427）安装 fastapi-0.165.0 + starlette-1.10.0 + pydantic-2.14.4 + uvicorn-0.54.0 + loguru-0.8.0，**Ran 64 tests 全通过**且覆盖率门槛通过；`docker publish` run 45124458096 ✅（镜像内 pip 解析新约束成功）。本地另以 `uv pip install -t` 装同一套版本跑 64 项，60 项通过，4 项 `test_utils` Config 用例因沙箱禁止在 `tempfile.mkdtemp` 目录内建子目录（`PermissionError: [WinError 5]`）受环境限制，非版本问题。
 
 兼容性观察（升级未改代码）：① `src/utils/logger.py` 用到的 `logger.remove()`/`logger.add(enqueue=...)`/`logger.opt` 在 loguru 0.8 语义不变；② 服务端只用 `APIRouter`、`WebSocket`、`CORS` 中间件与 `TestClient`，fastapi 0.115→0.165 与 starlette 1.10 下测试行为一致；③ `uvicorn[standard]` 在 Linux 会额外装 `uvloop 0.23.0`（Windows 无），CI 已覆盖。
+
+### 其余 Python 依赖（2026-11-23，落地 `7bbb9fc`）
+
+| 文件 | 包 | 原约束 | 新约束 | PyPI 最新 |
+|---|---|---|---|---|
+| `requirements.txt` | pycryptodome | `>=4.0.0,<5.0` | `>=4.6.0,<5.0` | 4.6.0 |
+| `requirements-dev.txt` | httpx | `>=0.27,<1.0` | `>=0.28.1,<1.0` | 0.28.1 |
+| `requirements-dev.txt` | coverage | `>=7.6,<8.0` | `>=7.17.4,<8.0` | 7.17.4 |
+| `mcp-bridge/requirements.txt` | httpx2 | `>=2.10,<3` | `>=2.16.2,<3` | 2.16.2 |
+| `mcp-bridge/requirements.txt` | websockets | `>=12,<18` | `>=17.4,<18` | 17.4 |
+| `mcp-bridge/requirements.txt` | mcp | `>=2.3.0,<3` | 不变 | 2.3.0（已最新） |
+
+注意：coverage 7.17.4、httpx2 2.16.2、websockets 17.4 都要求 Python `>=3.11`，而两个 Dockerfile 都是 `python:3.12-slim`、CI 矩阵为 3.11/3.12，满足；若将来降到 3.10 需回退这三个下限。两套约束均用 `uv pip install --dry-run` 做过全新解析。
+
+验证：`core tests` run 45125286614 ✅（py3.11 job 137528105019 / py3.12 job 137528105429，Ran 64 tests）、`mcp-bridge tests` run 45125286598 ✅（py3.11 job 137528104528 / py3.12 job 137528104999，Ran 35 tests，含 sse 与 streamable-http e2e）、`docker publish` run 45125286604 ✅。
