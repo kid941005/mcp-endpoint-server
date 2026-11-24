@@ -1,0 +1,35 @@
+name: cleanup ghcr tags
+
+on:
+  workflow_dispatch:
+    inputs:
+      tags:
+        description: Comma separated tags to delete
+        required: true
+        default: "0.0,v0.0.8,v0.0.7"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Delete tag versions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          TAGS: ${{ inputs.tags }}
+        run: |
+          set -euo pipefail
+          IFS=',' read -ra T <<< "$TAGS"
+          for t in "${T[@]}"; do
+            echo "== $t"
+            ids=$(gh api "/users/$OWNER/packages/container/mcp-endpoint-server/versions?per_page=100" --jq ".[] | select(.metadata.container.tags | index(\"$t\")) | .id")
+            if [ -z "$ids" ]; then echo "no version for $t"; continue; fi
+            for id in $ids; do
+              gh api -X DELETE "/users/$OWNER/packages/container/mcp-endpoint-server/versions/$id" && echo "deleted $t id=$id";
+            done
+          done
