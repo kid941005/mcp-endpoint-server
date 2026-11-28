@@ -548,3 +548,75 @@
 - 基础镜像 `python:3.12-slim` 未固定 `@sha256` 摘要（需按目标架构取 digest，避免与多平台构建耦合后再定）。
 - `docker-publish.yml` 的镜像命名空间仍取 `secrets.DOCKERHUB_USERNAME`，`workflow_dispatch`/fork 无该 secret 时会失败（需要时可加固定默认值）。
 - `tests/test_forwarding_lock.py` 用 ast/exec 抽取方法体的实现耦合、`test_integration._recv` 每次新建线程池、以及两组重复的「同名工具仲裁」用例，属测试重构，未在本轮触碰。
+
+## 十二、对抗性审查与健壮性加固（2026-11-28，落地 2707c07）
+
+### 12.1 审查方式
+
+按功能面拆成 6 路只读对抗性审查（鉴权/HTTP、WebSocket 转发、桥接、工具函数、
+部署与 CI、测试有效性），逐条回到源码复核后分严重/中等/轻微三级。复核阶段
+否定了 3 条不成立项：本地 data/*.cfg 明文 key（不在 git 树）、GHCR 缺 QEMU
+必然失败（v0.0.8 多架构已构建成功）、清理工作流写死 /users（该工作流已删除）。
+
+### 12.2 已修复（本轮提交 2707c07）
+
+| 位置 | 问题 | 处理 |
+| --- | --- | --- |
+| core/connection_manager.add_server_response | 任意已连接工具端可用猜中的 id 提交回包，污染聚合结果 | 校验 UUID 属于 expected_connections，否则告警丢弃 |
+| core/connection_manager.aggregate_responses | 聚合取 received_responses 全量、顺序不稳定 | 只按 expected_connections 聚合 |
+| core/connection_manager.aggregate_responses | 单工具端结果被按 key 嗅探重组，丢 isError/structuredContent | 单结果原样透传；多结果合并 content 时任一 isError 置 true |
+| handlers/websocket_handler._is_tools_list_response | 只看 result.tools 形状，未登记响应可覆盖工具注册表 | 要求存在在途 tools/list 请求 |
+| handlers/websocket_handler 两处 json.loads | 深层嵌套抛 RecursionError，打断连接循环 | 同时捕获 RecursionError |
+| server._is_authorized_request | 非 ASCII Authorization 让 hmac.compare_digest 抛 TypeError 变成 500 | 新增 _constant_time_equals，UTF-8 编码后比较 |
+| server.validate_token_and_get_agent_id | token 重复参数 last-wins，代理与本服务取值可能不一致 | 重复 token 直接 1008 |
+| server.validate_token_and_get_agent_id | agentId 无类型校验，非哈希类型进入连接表 | 要求去空白后非空字符串 |
+| server.health_check / stats | query key 重复同样存在取值不一致 | 检测重复 key 并拒绝 |
+| utils/logger._parse_size | inf 触发 OverflowError，import 期崩溃；0/负数导致每条日志轮转 | 只接受有限正数，异常回退 10MB |
+| utils/logger._setup_logger | backup_count <= 0 会在轮转后清空历史 | 回退 5 并提示 |
+| mcp_bridge.run_forever | 异常文本含完整 MCP_URL（token）直接写日志 | 新增 redact_text 统一打码 |
+| mcp_bridge.relay_ws_to_remote | 深层 JSON 的 RecursionError 未捕获 | 同时捕获 RecursionError |
+
+测试同步新增 14 个场景：非期望连接回包被忽略、单结果保留 isError/
+structuredContent、多结果合并保留 isError、未登记 tools/list 被忽略、在途
+tools/list 正常更新、非 ASCII 头、重复 query key、重复 token、非字符串与
+空白 agentId、_parse_size 合法/非法值、redact_text/redact_url 脱敏。
+
+### 12.3 仍建议处理（未实施，需决策或协议变更）
+
+严重：
+- 服务端主动请求回包路由：sampling/createMessage、roots/list、elicitation
+  的回包会被 _handle_robot_message 当成新请求改写 id 再广播并注册 pending，
+  导致原请求 30s 后返回 -32002。需要 (mcp_uuid, 原始 id) 待回投表与 method
+  白名单；sampling 是否在用决定优先级。
+- token 为静态 ECB 密文，无 exp/nonce，可永久重放。需要协议变更（时间戳+
+  nonce 或 AEAD），并同步小智端。
+- stdio 子进程继承宿主全部环境变量（含 MCP_ENDPOINT token）。建议改为
+  白名单（PATH/HOME/TMP 等 + MCP_ENV 覆盖）。
+
+中等：
+- 鉴权失败恒返回 HTTP 200（JSON-RPC error），不利于网关与监控；改 401/403
+  需确认客户端兼容。
+- 单 key 可查任意 agent 的工具清单与 /stats 全量连接信息；建议按 agent
+  作用域或拆分管理 key。
+- 配置损坏时请求路径 500；key 静默重生成、写盘非原子、无 0600 权限。
+- 转发 id 还原存在歧义："null" 还原为 None、True 还原为 "True"、字符串 id
+  含 "_n_" 会误解析；建议改用不可歧义编码。
+- 重复 id 会覆盖 pending；发送 5s 超时即注销连接，健康连接可能被误杀。
+- shutdown 只 cancel 不 await，清空字典未持锁；广播给小智端为串行 await。
+- 日志注入（消息含换行/ANSI）、get_logger(name) 参数实际无效。
+- bridge：batch 数组被丢弃、远端到 WS 无大小上限、干净关闭触发 1s 重连、
+  Windows MCP_ARGS 引号、_redact_args 漏单横线、configure_logging 的
+  getattr 类型错误。
+- 部署：.dockerignore 的 __pycache__/*.pyc 缺 **/ 前缀（COPY src 会带入
+  pyc）、HEALTHCHECK 端口写死 8004、基础镜像与 actions 未钉 digest、
+  compose 首次部署卷权限、adduser 未固定 uid 1000、latest 可指向非发布提交。
+
+轻微：pad_key 截断补零、b64decode 未 validate、parse_request 宽松且未捕获
+UnicodeDecodeError/RecursionError、NaN 处理、InterceptHandler 栈深度、
+未使用的 timestamp 字段等。
+
+### 12.4 验证
+
+- 本地：root 87 项、mcp-bridge 44 项全部通过；ruff F,E9,B,RET,PIE,C4 无告警。
+- CI（提交 2707c07）：core tests 46091685636、mcp-bridge tests 46091685697、
+  docker publish 46091685718 全部 success。
