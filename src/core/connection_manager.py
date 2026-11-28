@@ -306,6 +306,14 @@ class ConnectionManager:
         """添加服务器响应"""
         if transformed_request_id in self.pending_responses:
             pending = self.pending_responses[transformed_request_id]
+            if mcp_connection_uuid not in pending.expected_connections:
+                # 非期望连接的回包不能参与聚合：既可能是转发失败后迟到的回包，
+                # 也可能是同 agent 下其它工具端猜中 id 后注入的内容。
+                logger.warning(
+                    f"忽略非期望连接的响应: {transformed_request_id} "
+                    f"(UUID: {mcp_connection_uuid}, method={pending.method})"
+                )
+                return None
             pending.received_responses[mcp_connection_uuid] = response
             logger.debug(f"收到服务器响应: {transformed_request_id}/{mcp_connection_uuid}")
 
@@ -341,7 +349,12 @@ class ConnectionManager:
         不能把 error 对象混入 tools/content 数组产出非法 MCP 结果。
         """
         try:
-            responses = list(pending.received_responses.values())
+            # 只聚合期望连接的回包，避免迟到/注入的响应污染最终结果。
+            responses = [
+                pending.received_responses[uuid]
+                for uuid in sorted(pending.expected_connections)
+                if uuid in pending.received_responses
+            ]
             response_id = pending.transformed_request_id
             if responses:
                 response_id = responses[0].get("id", pending.transformed_request_id)
@@ -393,7 +406,11 @@ class ConnectionManager:
                     is_content = True
                     content.extend(result.get("content") or [])
 
-            if is_tools:
+            if len(successful) == 1:
+                # 单工具端结果必须原样透传：isError、structuredContent 等
+                # MCP 字段不能因为按 key 嗅探合并而丢失。
+                aggregated = successful[0]
+            elif is_tools:
                 for tool_name in sorted(tool_owners):
                     tools.append(
                         self._with_shadow_meta(first_tool[tool_name], tool_owners[tool_name])
@@ -401,8 +418,11 @@ class ConnectionManager:
                 aggregated = {"tools": tools}
             elif is_content:
                 aggregated = {"content": content}
-            elif len(successful) == 1:
-                aggregated = successful[0]
+                if any(
+                    isinstance(result, dict) and result.get("isError")
+                    for result in successful
+                ):
+                    aggregated["isError"] = True
             else:
                 # initialize/ping 等无合并语义的方法必须返回单个合法 result，
                 # 不能包装成 {"responses": [...]} 破坏 MCP 协议结构。

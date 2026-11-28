@@ -4,6 +4,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from src.core.connection_manager import PendingResponse
 from src.handlers import websocket_handler as handler_module
 from src.utils.jsonrpc import JSONRPCProtocol
 
@@ -176,6 +177,41 @@ class ServerMessageHandlerTests(unittest.IsolatedAsyncioTestCase):
         ) as forward:
             await handler._handle_mcp_server_message("agent", "uuid-4", json.dumps(message))
         forward.assert_not_awaited()
+
+    async def test_tools_list_without_pending_request_is_ignored(self):
+        """未登记的 tools/list 形状响应不能覆盖工具注册表。"""
+        handler = handler_module.WebSocketHandler()
+        message = {
+            "jsonrpc": "2.0",
+            "id": "forged_n_1",
+            "result": {"tools": [{"name": "evil"}]},
+        }
+        with patch.object(
+            handler_module.connection_manager, "update_tool_list"
+        ) as update:
+            await handler._handle_mcp_server_message("agent", "uuid-9", json.dumps(message))
+        update.assert_not_called()
+
+    async def test_tools_list_with_pending_request_updates_registry(self):
+        handler = handler_module.WebSocketHandler()
+        manager = handler_module.connection_manager
+        pending = PendingResponse("uuid-9_n_1", 1, "uuid-9", ["uuid-9"], "tools/list")
+        manager.pending_responses["uuid-9_n_1"] = pending
+        message = {
+            "jsonrpc": "2.0",
+            "id": "uuid-9_n_1",
+            "result": {"tools": [{"name": "echo"}]},
+        }
+        try:
+            with patch.object(manager, "update_tool_list") as update, patch.object(
+                manager, "add_server_response", return_value=None
+            ):
+                await handler._handle_mcp_server_message(
+                    "agent", "uuid-9", json.dumps(message)
+                )
+        finally:
+            manager.pending_responses.pop("uuid-9_n_1", None)
+        update.assert_called_once_with("agent", "uuid-9", [{"name": "echo"}])
 
 
 if __name__ == "__main__":

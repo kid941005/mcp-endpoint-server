@@ -1,5 +1,6 @@
 """HTTP and WebSocket endpoint tests."""
 import io
+import json
 import unittest
 
 from loguru import logger as loguru_logger
@@ -9,7 +10,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from urllib.parse import quote
 
-from src.server import app
+from src.server import _constant_time_equals, app
 from src.utils import __version__
 from src.utils.aes_utils import encrypt
 from src.utils.config import config
@@ -40,6 +41,19 @@ class HttpEndpointTests(unittest.TestCase):
             "/mcp_endpoint/health", headers={"Authorization": self.key}
         ).json()
         self.assertEqual(body["result"]["status"], "success")
+
+    def test_non_ascii_header_key_is_rejected_without_crash(self):
+        """非 ASCII 头不能让 hmac.compare_digest 抛 TypeError 变成 500。"""
+        self.assertFalse(_constant_time_equals("密钥", self.key))
+        self.assertFalse(_constant_time_equals("Bearer 密钥", self.key))
+        self.assertTrue(_constant_time_equals(self.key, self.key))
+
+    def test_duplicate_query_key_is_rejected(self):
+        body = self.client.get(
+            "/mcp_endpoint/health",
+            params=[("key", self.key), ("key", self.key)],
+        ).json()
+        self.assertEqual(body["error"]["code"], -32004)
 
     def test_health_rejects_wrong_header_key(self):
         body = self.client.get(
@@ -97,6 +111,36 @@ class WebSocketAuthTests(unittest.TestCase):
         with TestClient(app) as client:
             with self.assertRaises(WebSocketDisconnect) as ctx:
                 with client.websocket_connect("/mcp_endpoint/call/?token=bad") as websocket:
+                    websocket.receive_text()
+        self.assertEqual(ctx.exception.code, 1008)
+
+
+    def test_duplicate_token_params_are_rejected(self):
+        with TestClient(app) as client:
+            with self.assertRaises(WebSocketDisconnect) as ctx:
+                with client.websocket_connect(
+                    "/mcp_endpoint/call/?token=first&token=second"
+                ) as websocket:
+                    websocket.receive_text()
+        self.assertEqual(ctx.exception.code, 1008)
+
+    def test_non_string_agent_id_is_rejected(self):
+        token = encrypt(config.get("server", "key", "") or "", json.dumps({"agentId": 123}))
+        with TestClient(app) as client:
+            with self.assertRaises(WebSocketDisconnect) as ctx:
+                with client.websocket_connect(
+                    f"/mcp_endpoint/call/?token={quote(token, safe='')}"
+                ) as websocket:
+                    websocket.receive_text()
+        self.assertEqual(ctx.exception.code, 1008)
+
+    def test_blank_agent_id_is_rejected(self):
+        token = encrypt(config.get("server", "key", "") or "", json.dumps({"agentId": "   "}))
+        with TestClient(app) as client:
+            with self.assertRaises(WebSocketDisconnect) as ctx:
+                with client.websocket_connect(
+                    f"/mcp_endpoint/call/?token={quote(token, safe='')}"
+                ) as websocket:
                     websocket.receive_text()
         self.assertEqual(ctx.exception.code, 1008)
 

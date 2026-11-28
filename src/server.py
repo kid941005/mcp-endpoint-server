@@ -21,7 +21,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from .core.connection_manager import connection_manager
 from .handlers.websocket_handler import websocket_handler
-from fastapi import FastAPI, Header, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Header, Request, WebSocket, WebSocketDisconnect
 
 logger = get_logger()
 
@@ -36,7 +36,13 @@ async def validate_token_and_get_agent_id(websocket: WebSocket) -> Optional[str]
     Returns:
         str: 验证成功返回agentId，失败返回None
     """
-    token = websocket.query_params.get("token")
+    tokens = websocket.query_params.getlist("token")
+    if len(tokens) > 1:
+        # 重复参数会让前置代理与本服务的取值不一致（WAF 校验首值、框架取末值）。
+        logger.error("token参数重复")
+        await websocket.close(code=1008, reason="token参数重复")
+        return None
+    token = tokens[0] if tokens else None
     if not token:
         logger.error("缺少token参数")
         await websocket.close(code=1008, reason="缺少token参数")
@@ -56,9 +62,11 @@ async def validate_token_and_get_agent_id(websocket: WebSocket) -> Optional[str]
             await websocket.close(code=1008, reason="token数据格式错误")
             return None
         agent_id = data.get("agentId")
-        if not agent_id:
-            logger.error("无对应agentId")
-            await websocket.close(code=1008, reason="无对应agentId")
+        if not isinstance(agent_id, str) or not agent_id.strip():
+            # agentId 必须是字符串：对象/布尔值进入连接表会抛 unhashable，
+            # 或与其它 agent 发生哈希碰撞。
+            logger.error("agentId 缺失或类型错误")
+            await websocket.close(code=1008, reason="agentId 格式错误")
             return None
         return agent_id
     except json.JSONDecodeError:
@@ -148,6 +156,20 @@ def _extract_authorization_key(authorization: Optional[str]) -> Optional[str]:
     return value
 
 
+def _constant_time_equals(candidate: Optional[str], expected: Optional[str]) -> bool:
+    """常量时间比较字符串；非 ASCII 或非法输入直接判否。
+
+    hmac.compare_digest 对含非 ASCII 字符的 str 会抛 TypeError，
+    不能让它从请求路径冒泡成 500。
+    """
+    if not candidate or not expected:
+        return False
+    try:
+        return hmac.compare_digest(candidate.encode("utf-8"), expected.encode("utf-8"))
+    except (UnicodeError, TypeError):
+        return False
+
+
 _query_key_warning_emitted = False
 
 
@@ -163,9 +185,7 @@ def _is_authorized_request(authorization: Optional[str], key: Optional[str]) -> 
 
     header_key = _extract_authorization_key(authorization)
     if header_key:
-        return bool(expected_key) and hmac.compare_digest(
-            str(header_key), str(expected_key)
-        )
+        return _constant_time_equals(header_key, expected_key)
 
     if key:
         if not _query_key_warning_emitted:
@@ -174,7 +194,7 @@ def _is_authorized_request(authorization: Optional[str], key: Optional[str]) -> 
                 "管理接口使用 query 参数 key 已废弃，请改用 Authorization 头；"
                 "query 兼容将在下一个发布周期移除"
             )
-        return bool(expected_key) and hmac.compare_digest(str(key), str(expected_key))
+        return _constant_time_equals(key, expected_key)
 
     return False
 
@@ -191,11 +211,14 @@ def _authentication_error_response() -> dict:
 
 @app.get("/mcp_endpoint/health")
 async def health_check(
+    request: Request,
     authorization: Optional[str] = Header(default=None),
     key: Optional[str] = None,
     agentid: Optional[str] = None,
 ):
     """健康检查（Authorization: Bearer <server_key>；query key 兼容保留）"""
+    if len(request.query_params.getlist("key")) > 1:
+        return _authentication_error_response()
     if not _is_authorized_request(authorization, key):
         return _authentication_error_response()
 
@@ -213,10 +236,13 @@ async def health_check(
 
 @app.get("/mcp_endpoint/stats")
 async def stats(
+    request: Request,
     authorization: Optional[str] = Header(default=None),
     key: Optional[str] = None,
 ):
     """连接与工具统计（Authorization: Bearer <server_key>；query key 兼容保留）"""
+    if len(request.query_params.getlist("key")) > 1:
+        return _authentication_error_response()
     if not _is_authorized_request(authorization, key):
         return _authentication_error_response()
 

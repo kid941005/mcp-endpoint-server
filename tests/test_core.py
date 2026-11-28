@@ -107,6 +107,47 @@ class AggregateTests(unittest.TestCase):
         self.assertEqual(result["error"]["code"], -32603)
         self.assertNotIn("result", result)
 
+    def test_unexpected_connection_response_is_ignored(self):
+        """非期望连接的回包不能进入聚合（迟到回包/同 agent 其它工具端注入）。"""
+        manager = ConnectionManager()
+        pending = self._pending({})
+        manager.pending_responses["uuid_n_1"] = pending
+        result = manager.add_server_response(
+            "uuid_n_1", "not-expected", {"jsonrpc": "2.0", "id": "uuid_n_1", "result": {}}
+        )
+        self.assertIsNone(result)
+        self.assertEqual(pending.received_responses, {})
+
+    def test_single_result_keeps_iserror_and_structured_content(self):
+        """单工具端结果原样透传，isError/structuredContent 不能被合并逻辑丢弃。"""
+        payload = {
+            "jsonrpc": "2.0",
+            "id": "uuid_n_1",
+            "result": {
+                "content": [{"type": "text", "text": "boom"}],
+                "isError": True,
+                "structuredContent": {"reason": "boom"},
+            },
+        }
+        pending = self._pending({"a": payload})
+        result = ConnectionManager().aggregate_responses(pending)
+        self.assertEqual(result["result"], payload["result"])
+
+    def test_multiple_content_results_merge_iserror(self):
+        """多工具端合并 content 时，任一 isError 都要保留。"""
+        pending = self._pending({
+            "a": {"jsonrpc": "2.0", "id": "uuid_n_1", "result": {
+                "content": [{"type": "text", "text": "ok"}],
+            }},
+            "b": {"jsonrpc": "2.0", "id": "uuid_n_1", "result": {
+                "content": [{"type": "text", "text": "bad"}],
+                "isError": True,
+            }},
+        })
+        result = ConnectionManager().aggregate_responses(pending)
+        self.assertTrue(result["result"]["isError"])
+        self.assertEqual(len(result["result"]["content"]), 2)
+
 
 class PendingLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_pending_response_times_out_and_reports_error(self):

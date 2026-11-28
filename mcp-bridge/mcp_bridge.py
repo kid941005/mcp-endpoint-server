@@ -18,6 +18,7 @@ import json
 import logging
 import math
 import os
+import re
 import shlex
 import signal
 import sys
@@ -308,6 +309,16 @@ def redact_url(url: str) -> str:
         return "<invalid-url>"
 
 
+_SECRET_TEXT_RE = re.compile(
+    r"(?i)(token|key|api_key|apikey|access_token|secret|password|sig|signature)=([^&\s\"']+)"
+)
+
+
+def redact_text(text: Any) -> str:
+    """Mask token-like parameters in free-form text such as exception messages."""
+    return _SECRET_TEXT_RE.sub(r"\1=***", str(text))
+
+
 @contextlib.asynccontextmanager
 async def open_transport(cfg: BridgeConfig) -> AsyncIterator[tuple[Any, Any]]:
     """Open the selected MCP transport and yield (read_stream, write_stream)."""
@@ -451,7 +462,7 @@ async def relay_ws_to_remote(websocket: Any, write_stream: Any, name: str) -> No
                 continue
         try:
             data = json.loads(raw)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, RecursionError):
             LOG.warning("[%s] ignored non-JSON WebSocket message: %s", name, str(raw)[:200])
             continue
         try:
@@ -539,7 +550,10 @@ async def run_forever(cfg: BridgeConfig, stop_event: asyncio.Event) -> None:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            LOG.warning("[%s] bridge error: %s: %s", cfg.name, type(exc).__name__, exc)
+            # 异常文本里可能带完整 MCP_URL（含 token），不能原样写日志。
+            LOG.warning(
+                "[%s] bridge error: %s: %s", cfg.name, type(exc).__name__, redact_text(exc)
+            )
             LOG.debug("[%s] bridge traceback", cfg.name, exc_info=True)
         if stop_event.is_set():
             break

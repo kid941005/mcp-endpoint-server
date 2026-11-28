@@ -2,6 +2,7 @@
 日志管理工具
 """
 
+import math
 import os
 import sys
 import logging
@@ -90,7 +91,7 @@ class LoggerManager:
             max_file_size = config.peek("logging", "max_file_size", "10MB")
             try:
                 max_bytes = self._parse_size(max_file_size)
-            except ValueError:
+            except (ValueError, OverflowError, TypeError):
                 # 配置写错不应在 import 期崩溃，回退默认 10MB 并提示。
                 print(
                     f"[logger] 无效的 logging.max_file_size={max_file_size!r}，回退 10MB",
@@ -98,8 +99,14 @@ class LoggerManager:
                 )
                 max_bytes = 10 * 1024 * 1024
 
-            # 获取备份数量
+            # 获取备份数量；<=0 会让 loguru 在每次轮转后清空历史文件。
             backup_count = config.peekint("logging", "backup_count", 5)
+            if backup_count <= 0:
+                print(
+                    f"[logger] 无效的 logging.backup_count={backup_count!r}，回退 5",
+                    file=sys.stderr,
+                )
+                backup_count = 5
 
             logger.add(
                 log_file,
@@ -114,19 +121,26 @@ class LoggerManager:
             )
 
     def _parse_size(self, size_str: str) -> int:
-        """解析文件大小字符串（B/KB/MB/GB，大小写不敏感）。"""
+        """解析文件大小字符串（B/KB/MB/GB，大小写不敏感）。
+
+        只接受有限正数：inf/nan/0/负数会让 loguru 的 rotation 行为异常
+        （例如每条日志都轮转并压缩），统一视为无效配置。
+        """
         text = str(size_str).strip().upper()
-        for suffix, factor in (("GB", 1024 ** 3), ("MB", 1024 ** 2), ("KB", 1024), ("B", 1)):
+        factor = 1
+        number = text
+        for suffix, size in (("GB", 1024 ** 3), ("MB", 1024 ** 2), ("KB", 1024), ("B", 1)):
             if text.endswith(suffix):
+                factor = size
                 number = text[: -len(suffix)].strip()
-                try:
-                    return int(float(number) * factor)
-                except ValueError as exc:
-                    raise ValueError(f"无效的文件大小配置: {size_str!r}") from exc
+                break
         try:
-            return int(float(text))
-        except ValueError as exc:
+            value = float(number)
+        except (ValueError, TypeError) as exc:
             raise ValueError(f"无效的文件大小配置: {size_str!r}") from exc
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError(f"无效的文件大小配置: {size_str!r}")
+        return int(value * factor)
 
     def get_logger(self):
         """获取日志器"""

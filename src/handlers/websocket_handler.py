@@ -43,7 +43,7 @@ class WebSocketHandler:
 
         try:
             message_data = json.loads(message)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, RecursionError):
             logger.error(f"MCP服务器消息不是有效的 JSON，已忽略: {message}")
             return
 
@@ -115,13 +115,20 @@ class WebSocketHandler:
             )
 
     def _is_tools_list_response(self, message_data: dict) -> bool:
-        """检查是否为工具列表响应"""
-        return (
+        """检查是否为工具列表响应（必须是本次 tools/list 请求的回包）。
+
+        仅按 result.tools 判断会让任意响应（包括 tools/call 的结果或未登记的
+        推送）覆盖工具注册表，因此这里要求存在对应的在途请求。
+        """
+        if not (
             message_data.get("jsonrpc") == "2.0"
             and "result" in message_data
             and isinstance(message_data.get("result"), dict)
             and "tools" in message_data.get("result", {})
-        )
+        ):
+            return False
+        pending = connection_manager.pending_responses.get(message_data.get("id"))
+        return pending is not None and pending.method == "tools/list"
 
     def _is_initialize_response(self, message_data: dict) -> bool:
         """检查是否为初始化响应"""
@@ -162,7 +169,7 @@ class WebSocketHandler:
 
         try:
             message_data = json.loads(message)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, RecursionError):
             logger.warning(f"小智端消息不是有效的 JSON: {message}")
             error_response = JSONRPCProtocol.create_error_response(
                 error_code=JSONRPCProtocol.PARSE_ERROR,

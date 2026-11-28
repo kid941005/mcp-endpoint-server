@@ -754,5 +754,21 @@ class VersionLoggingTests(unittest.TestCase):
         )
 
 
+class RedactionTests(unittest.TestCase):
+    def test_redact_text_masks_token_like_parameters(self):
+        text = "InvalidURI: ws://host/mcp_endpoint/mcp/?token=secret&x=1&x=1"
+        masked = mcp_bridge.redact_text(text)
+        self.assertNotIn("secret&x=1", masked)
+        self.assertIn("token=***", masked)
+
+    def test_redact_url_masks_userinfo_and_token(self):
+        masked = mcp_bridge.redact_url(
+            "http://user:pass@host/path?token=secret&x=1"
+        )
+        self.assertNotIn("user", masked)
+        self.assertNotIn("pass", masked)
+        self.assertNotIn("secret&x=1", masked)
+
+
 if __name__ == "__main__":
     unittest.main()

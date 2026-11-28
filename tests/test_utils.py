@@ -7,6 +7,7 @@ import unittest
 from src.utils.aes_utils import decrypt, encrypt, pad_key
 from src.utils.config import ConfigManager
 from src.utils.jsonrpc import JSONRPCProtocol
+from src.utils.logger import LoggerManager
 from src.utils import __version__, format_runtime_versions, get_runtime_versions
 from src.utils.util import get_local_ip
 
@@ -142,6 +143,23 @@ class NetworkUtilTests(unittest.TestCase):
 
     def test_get_local_ip_is_cached(self):
         self.assertEqual(get_local_ip(), get_local_ip())
+
+
+class LogSizeParseTests(unittest.TestCase):
+    """rotation 大小解析必须拒绝 inf/nan/非正数，否则 loguru 行为异常。"""
+
+    def test_valid_sizes(self):
+        parse = LoggerManager._parse_size
+        self.assertEqual(parse(object(), "10MB"), 10 * 1024 * 1024)
+        self.assertEqual(parse(object(), "512kb"), 512 * 1024)
+        self.assertEqual(parse(object(), "1GB"), 1024 ** 3)
+        self.assertEqual(parse(object(), "2048"), 2048)
+
+    def test_invalid_sizes_raise(self):
+        parse = LoggerManager._parse_size
+        for value in ("inf", "-inf", "nan", "0", "-1", "abc", "10XB", ""):
+            with self.assertRaises(ValueError):
+                parse(object(), value)
 
 
 class RuntimeVersionTests(unittest.TestCase):
